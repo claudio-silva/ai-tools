@@ -4,6 +4,28 @@ Real-browser end-to-end testing through `browse` — a stateful driver over the 
 
 Where lightweight CDP probes (see `lite-chrome-automation`) answer "what is this page doing", this skill answers "does the whole flow actually work" — semantic element addressing, per-action re-verification, and evidence capture, driving a real browser the way a human tester would.
 
+## Why CLI, not the cua-driver MCP
+
+This skill exists because, when it was written, **cua-driver's MCP server was not usable for the typed browser loop on Devin or on Cursor**. Both hosts forward only the MCP text `content` channel to the model and drop `structuredContent`. cua-driver puts the IDs the next call needs — `window_id`, `tab_id`, `element_token`, `snapshot_id` — in `structuredContent`, while the text is a summary (`Found N window(s)`, `bound … with N tab(s)`). Without those IDs the agent cannot navigate, snapshot, click, or type.
+
+That is a host limitation, not a broken driver. The same tools return complete JSON over the CLI, and the official cua-driver skill already treats CLI as the default transport. `browse` is the portable way to make cua available to browser agents while MCP clients omit structured results. Internals of that finding live in `NOTES.md`.
+
+Even if a host later forwards `structuredContent` correctly, this wrapper can still be worth keeping:
+
+- whole flows in one `batch` call (fewer round-trips than a chain of MCP tools)
+- collision-free context names across parallel agents and IDEs
+- transparent `eval` DevTools fallback when the gated JS tool refuses
+- exported CDP endpoints, full-page screenshots, parallel isolated browsers
+- a host-agnostic CLI that behaves the same on Codex, Claude Code, Devin, and Cursor
+
+## Cursor
+
+On Cursor, **do not install this skill as the default way to verify a web app**. Cursor already has a built-in browser-automation tab (semantic snapshots, click/type/fill, screenshots) that covers typical development workflows better: no extra daemon, refs stay in the conversation, and you do not need `cua-driver`.
+
+The cua-driver MCP plugin on Cursor hits the same structured-content drop as Devin, so it is not a substitute for this CLI wrapper or for Cursor's built-in browser.
+
+Use this skill on Cursor only when you specifically need what the built-in tab cannot do (isolated real Chromium, parallel browsers, `batch`, video evidence, file upload, Playwright CDP attach) **and** you are willing to drive it via `browse` rather than MCP.
+
 ## Features
 
 - **Whole flows in one call** — `batch` executes an entire scenario (`open` → `type` → `press` → `wait-for` → `shot`) in a single invocation, the big speed/token win over step-at-a-time driving; batch lines may carry `--ctx` to drive several browsers at once
