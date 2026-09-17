@@ -1,4 +1,5 @@
 """Linux remote job controller. Receives a JSON request on stdin; no shell prompt interpolation."""
+import base64
 import fcntl
 import json
 import os
@@ -211,7 +212,11 @@ def main(req):
                 data = stream.read(min(req.get('limit', 16000), 100000))
                 next_offset = stream.tell()
                 more = bool(stream.read(1))
-            current.update(file=name, text=data.decode('utf-8', errors='replace'), next_offset=next_offset, more=more)
+            current.update(file=name, next_offset=next_offset, more=more)
+            if req.get('encoding') == 'base64':
+                current['data_base64'] = base64.b64encode(data).decode('ascii')
+            else:
+                current['text'] = data.decode('utf-8', errors='replace')
         except FileNotFoundError:
             current.update(file=name, text='', more=False)
     return current

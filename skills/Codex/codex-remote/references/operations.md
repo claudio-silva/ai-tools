@@ -1,37 +1,37 @@
-# Operational choices
+# Execution behaviour
 
-## SSH, Desktop and process lifetime
+Read when persistence, permissions or deployment boundaries affect a job.
 
-Any explicitly selected SSH destination can work; registration in Desktop is unnecessary. The helper uses OpenSSH config, known-host checks and `BatchMode=yes`, with agent forwarding disabled. It neither edits SSH config nor weakens host verification. Login-shell configuration must expose `python3` and `codex`; noisy startup files can corrupt machine-readable output.
+## Transport and lifetime
 
-An SSH proxy disconnect and a remote server shutdown are different events. Current Codex versions may run a managed daemon reached by `codex app-server proxy`. Inspect `codex app-server daemon version`, process ancestry and service configuration before concluding that app exit kills a task. Do not stop Desktop, SSH proxies or a shared daemon to test persistence without a scoped experiment. Daemon capabilities vary by CLI version.
+Linux targets require Python 3 and authenticated Codex on the login PATH. Any explicitly selected SSH destination can work; Desktop registration is unnecessary. OpenSSH configuration and known-host checks apply, BatchMode is enabled and agent forwarding is disabled. The helper does not install credentials or change SSH configuration.
 
-The helper's detached worker is independent of Desktop and the initiating SSH connection. A new SSH connection reads status and results. `nohup` alone does not provide job identity, status or recovery. `command > agent.pid &` writes command output to that file, not its PID; shell PID recording would use `$!`, but a PID alone is not a durable job identity.
+Both dispatch modes start an independent remote worker. Sync additionally polls. Auto selects a systemd user service when the user manager and linger are available, otherwise a detached process. Detached workers ignore SIGHUP, close SSH streams and start a separate session. Logout cleanup, reboot and OOM can still terminate them. The helper never enables linger or replays jobs after reboot.
 
-For Linux, prefer systemd user services plus explicitly configured linger for operation after full logout. The helper never enables linger or installs services globally. Transient jobs are not replayed after reboot; lost work needs reconciliation before a new dispatch. The state files distinguish a worker's boot ID and process start time to avoid interpreting a recycled PID as a running job. Atomic state and a per-job lock prevent duplicate launch on retries.
+A Desktop SSH proxy and its app-server may have separate lifetimes. Inspect the actual deployment before inferring what Desktop exit does. The helper's jobs have their own lifecycle. Local relay loss stops local reporting; it does not cancel remote work.
 
-## Privileges and containers
+Job IDs, atomic state and launch locks prevent duplicate dispatch on identical retries. Boot ID and process start time detect stale/recycled PIDs. A lost response means unknown state; reconnect using the same job ID before considering another run.
 
-Recommended bootstrap: a dedicated unprivileged development account, project workspaces, and user-managed execution. Use a separate administrator connection for explicit host provisioning. Keep host changes reproducible (scripts/configuration) and narrow privileged operations where practical.
+## Permissions and containers
 
-Docker is useful isolation only with appropriate boundaries. Membership of the rootful Docker group or access to its socket effectively grants host-root capabilities. Giving that socket to an agent container does not remove host authority. Prefer rootless Docker/Podman when compatible, or a narrowly controlled launcher that starts nonprivileged containers with selected mounts and no daemon socket inside. Docker is not a VM security boundary.
+The remote process has the selected SSH account's identity. Codex sandbox policy does not change that identity. Fresh approvals cannot be answered through this noninteractive backend; approval-required actions fail. Full access requires task authority. Use an interactive workflow when live approvals are needed.
 
-This helper runs Codex on the SSH target, not automatically inside Docker. To execute entirely within a container, use a separately configured SSH execution target/login environment with Codex, Python, authentication and workspace inside that boundary, or implement a reviewed container backend. Do not pretend `--cwd` selects a container. Running a host agent that calls `docker exec` still leaves the agent on the host.
+Codex executes in the SSH target environment. A working-directory option does not select a container. Container isolation requires the runtime and tools inside that boundary. Rootful Docker socket access confers effective host-root authority. A host agent invoking docker exec retains host permissions.
 
-## Models and approvals
+Remote account/project instructions, hooks, skills and MCP configuration apply; local conversation and skills are not automatically inherited. Job prompts, metadata, logs and results are stored privately under ~/.local/state/codex-remote/jobs and may contain sensitive data. No automatic cleanup or backup is provided.
 
-Aliases at creation (2026-09-09): luna = gpt-5.6-luna, terra = gpt-5.6-terra, sol = gpt-5.6-sol, astra = gpt-6-astra. CLI/account availability may differ; probe returns cached model capabilities when the host exposes them. Explicit full IDs are supported for future releases. Effort is sent through `model_reasoning_effort`; an unsupported pair fails rather than falling back.
+## Reporting and limits
 
-Noninteractive runs cannot ask the local founder for fresh permission. Read-only/workspace-write runs fail approval-required operations; full access is an explicit privilege choice. Use an interactive remote task when live approvals are important. Host user config, project instructions, hooks and MCP servers apply; inspect them before trusting a new executor. Do not equate a requested sandbox string with an independently audited sandbox.
+The relay is a native local subagent; client UI determines its placement. Remote events are not injected as native local tool calls. Stopping the relay does not cancel the job; explicit cancel writes a request observed by the remote worker.
 
-## Validation baseline (2026-09-09)
+Timeout/cancellation terminates the Codex process group without undoing external effects or guaranteeing termination of intentionally detached services. Time limits are not token budgets. Successful exit is not acceptance. Reconcile failures or unknown states before repeating external effects.
 
-Linux CLI 0.153.4: authenticated probe passed; real Luna/low read-only async and sync jobs completed. Async completed approximately 28 seconds after dispatch while the initiating SSH connection had already exited; its result was fetched through a separate connection. This tests the helper's detach, not Desktop app exit, Mac sleep, full logout, reboot or network outage. Six Linux tests with a simulated CLI covered exact prompt transport, idempotent launch, changed-request rejection, cancellation, timeout, turn.failed with exit zero, invalid IDs and stale process identity. The systemd backend was not exercised live because the target had Linger=no; its prerequisite check intentionally refused that topology. Only Luna was called live; other model/effort support came from the remote cached catalogue.
+Model aliases live in remote.py. Verify support on the target; cached catalogue information is advisory. Never silently replace unsupported models or efforts. Relay model selection is independent of remote worker model selection.
 
-## Sources
+## References
 
-- [Codex noninteractive mode](https://learn.chatgpt.com/docs/non-interactive-mode): JSON events, saved authentication, output-last-message.
-- [Codex remote connections](https://learn.chatgpt.com/docs/remote-connections): Desktop SSH integration and mobile topology.
-- [Codex app server](https://learn.chatgpt.com/docs/app-server): client/server protocol and experimental transport.
-- [systemd loginctl](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html): linger and user manager lifetime.
-- [Docker rootless](https://docs.docker.com/engine/security/rootless/) and [Docker post-install](https://docs.docker.com/engine/install/linux-postinstall/): rootless execution and Docker group authority.
+- [Codex noninteractive mode](https://learn.chatgpt.com/docs/non-interactive-mode)
+- [Codex subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents)
+- [Codex remote connections](https://learn.chatgpt.com/docs/remote-connections)
+- [systemd loginctl](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html)
+- [Docker privileges](https://docs.docker.com/engine/install/linux-postinstall/)

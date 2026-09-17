@@ -1,5 +1,7 @@
 """Dispatch and inspect remote Codex jobs using OpenSSH and the Python standard library."""
 import argparse
+import base64
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -11,6 +13,33 @@ import uuid
 
 MODELS = {'luna': 'gpt-5.6-luna', 'terra': 'gpt-5.6-terra', 'sol': 'gpt-5.6-sol', 'astra': 'gpt-6-astra'}
 ACTIVE = ('queued', 'running', 'launch_unknown')
+
+
+def save_result(host, job, destination):
+    """Transfer final bytes without exposing the document to the relay model."""
+    current = rpc(host, {'action': 'status', 'job': job})
+    if current.get('status') in ACTIVE:
+        raise ValueError('Job is still active; wait before collecting its final result')
+    target = Path(destination)
+    if not target.is_absolute():
+        raise ValueError('Result destination must be an absolute path')
+    offset = 0
+    digest = hashlib.sha256()
+    # Exclusive creation preserves existing results. Failed transfers retain a partial file.
+    with target.open('xb') as out:
+        target.chmod(0o600)
+        while True:
+            part = rpc(host, {'action': 'result', 'job': job, 'offset': offset,
+                              'limit': 100000, 'encoding': 'base64'})
+            data = base64.b64decode(part.get('data_base64', ''), validate=True)
+            out.write(data)
+            digest.update(data)
+            offset += len(data)
+            if not part.get('more'):
+                break
+            if not data:
+                raise RuntimeError('Transfer did not advance')
+    return dict(current, local_result=str(target), bytes=offset, sha256=digest.hexdigest())
 
 
 def rpc(host, request):
@@ -47,6 +76,7 @@ def parser():
             q.add_argument('--job', required=name != 'start')
         if name in ('wait', 'start'):
             q.add_argument('--wait-seconds', type=int, default=45)
+            q.add_argument('--status-only', action='store_true', help='Do not return the final document in tool output')
         if name == 'start':
             q.add_argument('--cwd', required=True)
             q.add_argument('--model', required=True, help='luna, terra, sol, astra, or an explicit model ID')
@@ -60,6 +90,8 @@ def parser():
         if name in ('logs', 'result'):
             q.add_argument('--offset', type=int, default=0)
             q.add_argument('--limit', type=int, default=16000)
+        if name == 'result':
+            q.add_argument('--save-to', help='Save complete result to a new local file; print metadata only')
         if name == 'logs':
             q.add_argument('--file', choices=('events.jsonl', 'stderr.log', 'worker.log'), default='events.jsonl')
     return p
@@ -76,6 +108,12 @@ def main():
     if req.get('offset', 0) < 0 or req.get('limit', 1) <= 0:
         p.error('offset must be nonnegative and limit positive')
     mode = req.pop('mode', None)
+    status_only = req.pop('status_only', False)
+    save_to = req.pop('save_to', None)
+    if save_to:
+        result = save_result(host, args.job, save_to)
+        print(json.dumps(result, indent=2))
+        return 0 if result.get('status') == 'completed' else 1
     if args.action == 'start':
         if args.max_seconds <= 0:
             p.error('--max-seconds must be positive')
@@ -97,7 +135,7 @@ def main():
         while result.get('status') in ACTIVE and time.monotonic() < deadline:
             time.sleep(min(2, max(0, deadline - time.monotonic())))
             result = rpc(host, {'action': 'status', 'job': req['job']})
-        if result.get('status') not in ACTIVE:
+        if result.get('status') not in ACTIVE and not status_only:
             result = rpc(host, {'action': 'result', 'job': req['job']})
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 1 if result.get('status') in ('failed', 'lost', 'timed_out', 'cancelled', 'launch_failed') else 0

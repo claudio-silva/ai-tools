@@ -1,44 +1,54 @@
 ---
 name: codex-remote
-description: Delegate bounded tasks to Codex on SSH servers, synchronously or asynchronously, with explicit model, reasoning effort, durable job IDs, status, results and cancellation. Use for remote development, heavy builds, or authorized server administration.
+description: Delegate work to remote Codex workers through a visible local Luna relay. Use in the main conversation to prepare remote tasks, choose worker models and permissions, and collect results.
 ---
 
-# Remote Codex delegation
+# Remote delegation — operator
 
-Use the bundled Python helper for independently running Linux jobs. This is delegation through SSH and Codex CLI, not a native child in the Desktop subagent tree. Jobs need no Desktop registration and do not automatically appear in its sidebar. Desktop task tools remain useful when the user explicitly wants a native app task.
+This skill is for the main agent. Its scripts and operational reference live in this directory. Local execution is performed by the global `codex_remote_relay` custom subagent, whose TOML definition is installed separately. Do not load the relay's full procedure into the operator's context: pass this skill's resolved absolute directory as the helper directory in the relay assignment.
 
-## Select the target and mandate
+Use one native local `codex_remote_relay` relay per remote job, with **no conversation-history fork**. Its custom-agent configuration selects **gpt-5.6-luna / low**. The client displays its ordinary subagent activity; exact sidebar placement is client-dependent. Remote jobs themselves are not registered as native children. If the custom subagent, Luna/low, or native subagents are unavailable, report that limitation rather than silently changing the workflow or model. Explicit user overrides take precedence.
 
-- Resolve the user-selected SSH alias or explicit `user@host`; use `ssh -G TARGET` to inspect effective user/hostname. Concrete aliases in SSH config (including Include files) are candidates, not permission to contact every host. Never scan all registered machines or copy credentials automatically. Desktop registration alone is not an SSH address: resolve its actual connection first.
-- Require working SSH authentication, Linux, Python 3, and authenticated Codex on the target's login PATH. Run `probe`; it reports UID, CLI version, model catalogue when exposed, and persistence prerequisites. A missing model catalogue means unverified availability; execution may fail. Never silently substitute a model or effort.
-- State remote absolute working directory, outcome, scope, acceptance, model and effort. Select among Luna, Terra, Sol and Astra using the user's choice, or make a task-appropriate choice and disclose it. The helper accepts aliases and explicit model IDs; consult `--help`. Other model IDs/efforts are passed exactly and must be verified on the host.
-- Default to `read-only`; use `workspace-write` for authorized project changes. Host administration or `danger-full-access` requires authorization covering those privileges; `--allow-full-access` records that deliberate choice. A root SSH login remains root even in read-only mode. This skill never grants sudo, Docker socket access or extra authority by itself.
-- The prompt must include relevant instructions, acceptance criteria and limits: a remote CLI session does not inherit the local conversation or local skills. Use isolated worktrees or non-overlapping paths for concurrent writes. Do not copy a repository or install prerequisites unless within the requested task.
+## Prepare the task
 
-## Dispatch and collect
+Resolve the authorized SSH target, absolute remote working directory, outcome, scope, permissions, remote worker model/effort, timeout and desired observation mode. Any selected SSH alias or user@host can work; Desktop registration is unnecessary. The remote environment requires Linux, Python 3 and authenticated Codex. Discovery is not permission to contact every configured host.
 
-Run `python3 <skill-dir>/scripts/remote.py --help`. All responses are JSON. Prompts go through a UTF-8 file or stdin, never interpolated into shell code. The helper uses the remote user's saved Codex auth, disables fresh approval prompts (`never` means approval-required actions fail), and preserves normal sandbox enforcement. It does not bypass approvals or enable automatic review.
+Worker model and effort are independent of the Luna relay. Select Luna, Terra, Sol, Astra or an explicit model ID according to the user's request or a disclosed task-appropriate choice. Default to read-only; use workspace-write for authorized project work. Host administration/full access requires authority covering that task. Use isolated workspaces or non-overlapping paths for parallel writes.
 
-```bash
-python3 <skill-dir>/scripts/remote.py probe --host devbox
-python3 <skill-dir>/scripts/remote.py start --host devbox --cwd /srv/project --model luna --effort medium --prompt-file /absolute/task.txt --mode async
-python3 <skill-dir>/scripts/remote.py start --host devbox --cwd /srv/project --model sol --effort high --sandbox workspace-write --prompt-file /absolute/task.txt --mode sync --wait-seconds 45
-python3 <skill-dir>/scripts/remote.py status --host devbox --job JOB_ID
-python3 <skill-dir>/scripts/remote.py result --host devbox --job JOB_ID
-python3 <skill-dir>/scripts/remote.py logs --host devbox --job JOB_ID
-python3 <skill-dir>/scripts/remote.py cancel --host devbox --job JOB_ID
+Write the complete worker prompt once to a UTF-8 file accessible to the local relay. Include relevant instructions, limits and acceptance criteria; the remote worker does not inherit this conversation or local skills. Reuse existing material through code where possible. Do not place the large prompt in the relay assignment, and do not fork the parent's history. Allocate a stable job ID and a new absolute local result-file path.
+
+## Delegate through the custom relay agent
+
+Create the global custom subagent `codex_remote_relay`, with no inherited conversation history (`fork_turns: "none"` where supported). Its TOML definition controls the relay model and effort; do not silently replace that agent with a generic child. When the client cannot select a named custom subagent, report the limitation rather than approximating the workflow with a generic child.
+
+Supply this compact assignment, filling in the references and execution values:
+
+```text
+You are the local relay defined by `codex_remote_relay`; do not solve the worker task or spawn another relay.
+Operation: start | reattach | cancel
+Public task label: <short label>
+Helper directory: <absolute path to this codex-remote skill directory>
+SSH target: <alias or user@host>
+Job ID: <stable unique ID, or existing ID for reattach/cancel>
+Remote working directory: <absolute remote path>
+Worker model / reasoning effort: <selected values>
+Sandbox and authority: <selected policy and concise scope>
+Maximum runtime: <seconds>
+Prompt file: <absolute local path; start only>
+Result file: <new absolute local path>
+Observation: observe | dispatch-only
+Do not read or repeat the prompt/result document; transfer through the helper.
+Return compact state, host/job ID, result path and any actionable blocker.
 ```
 
-- Both modes first detach the job remotely. Sync polls within a `--wait-seconds` window (default 45, plus SSH call latency), then returns the current state without cancelling. Continue bounded waits or other work as appropriate. Async returns after dispatch. Persist host, job ID, remote state path, mandate and verification limits in the task's normal records.
-- A generated job ID is printed to stderr **before** contacting the host. A lost launch response is ambiguous: query that same ID; never retry with a new ID automatically. Explicit `--job` supports idempotent retries of exactly the same request. Existing IDs cannot start another run.
-- `--max-seconds` (default 3600) is a wall-clock limit, not a token/cost budget. Cancellation requests and timeout terminate the process group created for Codex. They cannot undo external effects or guarantee termination of deliberately detached processes/services created by the task.
-- Inspect status, final response and relevant evidence; exit zero alone does not prove acceptance. `failed`, `timed_out`, `cancelled`, `launch_failed` and `lost` are not completion. An unreachable server means unknown state. Do not resubmit work with external effects without reconciliation.
-- Jobs live under the remote user's `~/.local/state/codex-remote/jobs/JOB_ID` with private permissions. Prompt, metadata, events and final output can contain sensitive project data. No automatic deletion or log transfer. Output reads are bounded; use offsets for longer logs/results.
+Only include fields needed for the operation. Reattach/cancel do not require the original task prompt. The relay receives its procedure from the custom-agent definition and obtains the helper only from the supplied directory.
 
-## Persistence and execution boundaries
+## Observe and accept
 
-Read [operations.md](references/operations.md) for disconnects, service managers, containers, security and known limitations. Prefer `--backend auto`: it chooses a systemd user service only when the user manager and linger are available; otherwise it uses a detached process. `--backend systemd` refuses missing prerequisites. No backend auto-restarts a task after failure or reboot.
+- Prefer **observe** when the user values visible progress: the relay keeps watching until a terminal state or blocker. The main agent may wait for it (synchronous usage) or continue other work while it runs (asynchronous usage).
+- Use **dispatch-only** when explicitly desired: the relay returns after launching. Its UI may show Done while the remote job continues; do not present this as a live status indicator.
+- Preserve host/job ID and the local relay reference in the task's normal records. Send follow-ups to the existing relay where possible; if it is unavailable, create a fresh Luna/low relay using the existing job ID. Never create a second job merely because a reply was lost.
+- Stopping a local subagent is not remote cancellation. Delegate an explicit cancel operation and confirm the remote terminal state. Local app loss stops reporting; it does not automatically stop detached remote work or create a future notification.
+- Evaluate the result and relevant artifacts against acceptance in the main agent. Read the saved result directly as needed, without asking Luna to reproduce it. Successful process exit is not proof of acceptance.
 
-Detached mode closes SSH streams, ignores SIGHUP and starts a separate session. It survives ordinary SSH disconnects but is not immune to host logout cleanup, reboot or OOM. Do not promise 24/7 operation solely from a successful detached launch. If persistence across complete logout is required, arrange an authorized service-manager setup and test it.
-
-Remote work does not wake or notify this local conversation by itself. Use the product's monitoring/automation mechanism only when requested; record whether that monitor itself depends on the local machine. Never claim mobile reachability or independence from the Mac without testing the actual topology.
+The relay handles probing, transport, waits, bounded diagnostics and collection. It escalates problems to the operator; it does not change scope, worker model or privileges on its own.
