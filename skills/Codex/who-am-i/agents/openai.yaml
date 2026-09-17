@@ -1,0 +1,4 @@
+interface:
+  display_name: "Who Am I"
+  short_description: "Report the invoking Codex runtime identity from local evidence"
+  default_prompt: "Determine this Codex agent runtime identity using verified local metadata."

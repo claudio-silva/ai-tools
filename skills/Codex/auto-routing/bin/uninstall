@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Remove auto-routing from the Codex global skills folder, and the worker
+# roles this project installed.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+SKILL_DEST="$CODEX_HOME/skills/auto-routing"
+AGENTS_DEST="$CODEX_HOME/agents"
+
+if ! command -v trash >/dev/null 2>&1; then
+  echo "error: trash is required (do not use rm)" >&2
+  exit 1
+fi
+
+removed=0
+
+if [[ -e "$SKILL_DEST" ]]; then
+  trash "$SKILL_DEST"
+  echo "Removed skill: $SKILL_DEST"
+  removed=1
+fi
+
+# Also drop the v1 skill name if it is still present.
+if [[ -e "$CODEX_HOME/skills/token-economy" ]]; then
+  trash "$CODEX_HOME/skills/token-economy"
+  echo "Removed leftover skill: $CODEX_HOME/skills/token-economy"
+  removed=1
+fi
+
+shopt -s nullglob
+roles=("$ROOT/te-agents"/*.toml)
+for src in "${roles[@]}"; do
+  dest="$AGENTS_DEST/$(basename "$src")"
+  if [[ -e "$dest" ]]; then
+    trash "$dest"
+    echo "Removed role: $dest"
+    removed=1
+  fi
+done
+
+if [[ "$removed" -eq 0 ]]; then
+  echo "Nothing to uninstall (no auto-routing skill or shipped roles found)."
+  exit 0
+fi
+
+echo "Uninstalled. Restart Codex so it drops the roles."

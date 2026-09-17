@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Install auto-routing into the Codex global skills folder, and its worker
+# roles into the global agents folder.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+SKILL_NAME="auto-routing"
+SKILL_DEST="$CODEX_HOME/skills/$SKILL_NAME"
+AGENTS_DEST="$CODEX_HOME/agents"
+
+if ! command -v trash >/dev/null 2>&1; then
+  echo "error: trash is required (do not use rm)" >&2
+  exit 1
+fi
+
+if [[ ! -f "$ROOT/SKILL.md" ]]; then
+  echo "error: SKILL.md not found in $ROOT" >&2
+  exit 1
+fi
+if [[ ! -f "$ROOT/agents/openai.yaml" ]]; then
+  echo "error: agents/openai.yaml not found in $ROOT" >&2
+  exit 1
+fi
+
+mkdir -p "$CODEX_HOME/skills" "$AGENTS_DEST"
+
+# Replace any previous install of this skill, and the v1 token-economy name.
+for old in "$SKILL_DEST" "$CODEX_HOME/skills/token-economy"; do
+  if [[ -e "$old" ]]; then
+    trash "$old"
+  fi
+done
+
+mkdir -p "$SKILL_DEST/agents"
+cp "$ROOT/SKILL.md" "$SKILL_DEST/SKILL.md"
+cp "$ROOT/agents/openai.yaml" "$SKILL_DEST/agents/openai.yaml"
+
+# Roles this skill ships. Replacing them is part of the install.
+shopt -s nullglob
+roles=("$ROOT/te-agents"/*.toml)
+if [[ ${#roles[@]} -eq 0 ]]; then
+  echo "error: no te-agents/*.toml files to install" >&2
+  exit 1
+fi
+for src in "${roles[@]}"; do
+  dest="$AGENTS_DEST/$(basename "$src")"
+  if [[ -e "$dest" ]]; then
+    trash "$dest"
+  fi
+  cp "$src" "$dest"
+done
+
+# v1-only roles that Revision 2 dropped.
+for obsolete in te_debug.toml te_advise_deep.toml; do
+  if [[ -e "$AGENTS_DEST/$obsolete" ]]; then
+    trash "$AGENTS_DEST/$obsolete"
+  fi
+done
+
+echo "Installed skill: $SKILL_DEST"
+echo "Installed ${#roles[@]} worker roles in $AGENTS_DEST"
+echo "Restart Codex so it rediscovers the roles."

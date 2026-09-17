@@ -1,0 +1,4 @@
+interface:
+  display_name: "remove.bg CLI"
+  short_description: "Remove backgrounds with credit-aware defaults"
+  default_prompt: "Use $removebg-cli to remove an image background while minimizing API credit use."
