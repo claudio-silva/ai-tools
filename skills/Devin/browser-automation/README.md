@@ -1,6 +1,6 @@
 # browser-automation
 
-Real-browser end-to-end testing through `browse` — a stateful driver over the `cua-driver` CLI that turns browser automation into single commands: allocate an isolated context, run an entire multi-step flow in **one `batch` call**, and get back verified results. No MCP server required.
+Real-browser end-to-end testing through `browse` — a stateful driver over the `cua-driver` CLI that turns browser automation into simple commands: allocate an isolated context, run an entire multi-step flow in **one `batch` call**, and get back verified results. No MCP server required.
 
 ## Features
 
