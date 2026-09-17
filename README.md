@@ -20,6 +20,8 @@ Work in any MCP/agent environment; may carry env-specific metadata (e.g. `agents
 | --- | --- |
 | [removebg-cli](skills/Shared/removebg-cli/) | remove.bg background removal via CLI/API with credit-aware defaults and mandatory validation |
 | [affinity-sdk](skills/Shared/affinity-sdk/) | Verified operating procedure for the official Affinity by Canva MCP |
+| [cua-browser-automation](skills/Shared/cua-browser-automation/) | Real-browser E2E testing via the `browse` wrapper over `cua-driver` — snapshot → act → verify, parallel contexts, evidence capture |
+| [lite-chrome-automation](skills/Shared/lite-chrome-automation/) | Lightweight CDP control of dedicated Chrome instances — MAIN-world JS eval, cookies, screenshots, extension debugging |
 
 ### Codex — `skills/Codex/`
 
@@ -37,21 +39,14 @@ Work in any MCP/agent environment; may carry env-specific metadata (e.g. `agents
 | [cursor-plugin-development](skills/Cursor/cursor-plugin-development/) | Verified guide to Cursor plugins: commands, skills, subagents, hooks — including undocumented gotchas |
 | [working-with-cursor-subagents](skills/Cursor/working-with-cursor-subagents/) | Verified Task-tool/model-resolution behavior for Cursor subagents |
 
-### Devin — `skills/Devin/`
-
-| Skill | Description |
-| --- | --- |
-| [browser-automation](skills/Devin/browser-automation/) | Real-browser E2E testing via the `browse` wrapper over `cua-driver` — snapshot → act → verify, parallel contexts, evidence capture |
-
 ## Layout
 
 ```
 mcp/<name>/             # standalone MCP servers — each is its own project
 skills/
-  Shared/<skill>/       # install into any environment's skills dir
+  Shared/<skill>/       # cross-environment; may carry env-specific metadata
   Codex/<skill>/        # → ~/.codex/skills/  (also read by Cursor as a compat dir)
   Cursor/<skill>/       # → ~/.cursor/skills/
-  Devin/<skill>/        # → ~/.config/devin/skills/
 ```
 
 `~/.agents/skills/` is the env-neutral global location both Codex-era and Cursor read; `~/.claude/skills/` is also picked up as a compat dir.

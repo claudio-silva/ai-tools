@@ -1,8 +1,9 @@
-# browser-automation — internals & verified findings
+# cua-browser-automation — internals & verified findings
 
 Everything below was verified against cua-driver 0.28.2 (0.20.0 where noted)
 by driving isolated Chromium instances end-to-end. Read this before modifying
-`browse`.
+`browse`. Host-specific observations name the host (mostly Devin, where the
+verification ran) — the CLI guidance itself is host-agnostic.
 
 ## Transport: CLI is authoritative, MCP bridge is detection-only
 
@@ -227,7 +228,26 @@ loopback-only) and the endpoint is fully reachable by other local processes:
 stdlib WebSocket client (`ws_rpc` — handshake, masked client frames,
 event-skipping). Verified: the gated tool refused and the fallback returned
 `performance` entries, DOM queries, and awaited promises. Agents never need
-to know which path ran.
+to know which path ran. `eval @FILE` reads the JS from disk — multi-line
+probes without shell-quoting pain.
+
+**Full-page screenshots**: `get_browser_state`'s `include_screenshot` is
+viewport-only; `shot --full` instead calls `Page.captureScreenshot` with
+`captureBeyondViewport:true` over the same WS plumbing (verified: 3369px
+capture of a 3000px body vs 1231px viewport).
+
+**Extensions — verified dead end on driver-owned instances** (0.28.2): the
+prepared Chromium launches with `--disable-extensions` baked into the
+driver's template, and `browser_prepare` has no launch-args hook (a guessed
+`launch_args` field is silently ignored — `additionalProperties:true` means
+unknown fields don't error, they just do nothing). `Extensions.loadUnpacked`
+over the browser-level WS (`/json/version` → `webSocketDebuggerUrl`) returns
+a real extension id, but the extension stays inert: no service-worker target,
+content scripts never inject (verified with a marker extension mutating
+`document.title` — no effect after reload). The one context where it would
+work — an `attach`ed browser with an owned endpoint — is itself a dead end
+here, so `browse` has no extension command at all: use
+lite-chrome-automation's `--extension` launch flag.
 
 ## Clipboard (verified on macOS, 0.28.2)
 - `clipboard_write {text}` writes the REAL system pasteboard — it clobbers

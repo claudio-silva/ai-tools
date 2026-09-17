@@ -1,9 +1,9 @@
 ---
-name: browser-automation
+name: cua-browser-automation
 description: Drive a real browser the way a human tester would: open the app, click through a flow, read what rendered, and capture proof. Use it when the thing being verified is what a browser actually renders and how a real user interacts with it — smoke-test a freshly implemented feature end-to-end, automate a service that exposes no API, reach flows HTTP tests cannot, verify responsive layouts, and capture evidence.
 ---
 
-# browser-automation
+# cua-browser-automation
 
 Real-browser testing through the `browse` wrapper script — one shell call per
 step, no manual plumbing. It launches an isolated driver-owned Chromium
@@ -13,7 +13,7 @@ step, no manual plumbing. It launches an isolated driver-owned Chromium
 ## First call — always
 
 ```sh
-CTX=$(~/.config/devin/skills/browser-automation/browse new-context mytest)
+CTX=$(<skill-dir>/browse new-context mytest)
 ```
 
 `new-context` is the pre-flight **and** the allocator: it fails with an install
@@ -28,8 +28,8 @@ in background and the user can keep working in other windows mid-run.
 
 ## Commands
 
-Invoke as `~/.config/devin/skills/browser-automation/browse <cmd> --ctx $CTX`
-(or `python3 <skill-dir>/browse`). `--ctx` defaults to `main` when omitted —
+Invoke as `<skill-dir>/browse <cmd> --ctx $CTX` (or `python3 <skill-dir>/browse`)
+— `browse` is the script next to this file. `--ctx` defaults to `main` when omitted —
 fine for quick interactive use, but agents should always use `new-context`.
 
 | Command | What it does |
@@ -46,14 +46,14 @@ fine for quick interactive use, but agents should always use `new-context`.
 | `files TARGET PATH...` | Assign local files to a file input (absolute paths, no symlinks). |
 | `hover` / `right-click` / `double-click TARGET` | Pointer actions on an element. |
 | `scroll DY [TARGET]` / `drag TARGET TO` | Scroll (dy px, optional element) / drag element→element or `x,y`. |
-| `shot [PATH]` | Tab-viewport PNG to PATH (default: tmp file; path printed). Prints the px→css scale when ≠1 — divide measured PNG coords by it before passing `x,y` to `scroll`/`drag`. |
+| `shot [PATH] [--full]` | Tab-viewport PNG to PATH (default: tmp file; path printed). `--full` captures the whole scrollable page via CDP `captureBeyondViewport`. Prints the px→css scale when ≠1 — divide measured PNG coords by it before passing `x,y` to `scroll`/`drag`. |
 | `text` | Rendered page text (may include browser-UI strings — popups/menus). |
 | `read TARGET` | Print one element's role/name/value/states — extract a generated code or field value (e.g. the `/listen/<code>` on the host page). |
 | `copy [TARGET]` | Copy page text (or an element's value/name) to the **user's real system clipboard**, verified by read-back. It clobbers the clipboard — use for a reason, not casually. |
 | `download TARGET DIR` | Save what a link downloads into DIR. Refuses from the CLI (`browser_consent_required` — needs MCP-host approval); the practical path is `click` the link and find the file in the browser's download dir. |
 | `dom CSS` | CSS-selector existence check (read-only). |
-| `eval JS` | Run page JS on the active tab and print the value (`returnByValue`, awaits promises). Transparent fallback: tries the driver's JS tool first, and on its standard-mode refusal evaluates over the instance's own DevTools endpoint — same result either way. |
-| `cdp` | Print the instance's DevTools http + page WS endpoints — for external CDP tooling (e.g. playwright-core `connectOverCDP`) when `eval`'s one-shot call isn't enough. |
+| `eval JS\|@FILE` | Run JS in the page's **MAIN world** and print the value (`returnByValue`, awaits promises) — real page internals, not a sandboxed view. `@FILE` reads JS from disk for multi-line probes. Transparent fallback: tries the driver's JS tool first, and on its standard-mode refusal evaluates over the instance's own DevTools endpoint — same result either way. |
+| `cdp` | Print the instance's DevTools http + browser/page WS endpoints — for external CDP tooling (e.g. playwright-core `connectOverCDP`) when `eval`'s one-shot call isn't enough. |
 | `wait-for TEXT [--timeout S]` | Poll until text appears (default 15s). |
 | `dialog inspect` / `accept` / `dismiss [--text T]` | JS alert/confirm/prompt/beforeunload. |
 | `tabs` / `tab SEL` | List tabs; switch active by index, tab_id, or URL/title substring. |
@@ -120,8 +120,8 @@ fallback), take viewport screenshots, record video + per-action
 before/after evidence, resize the window for responsive checks, run
 multi-step flows via `batch`, and drive several independent browsers at
 once — all in background, without stealing the user's focus. The daemon
-self-starts on first call; the Devin `cua-driver` MCP server is **not**
-required (it renders text-only — the CLI is the reliable transport).
+self-starts on first call; **no MCP server is required** — host MCP bridges
+may render only the text channel, so the CLI is the reliable transport.
 
 **Cannot** (verified limits — do not attempt, do not improvise around):
 - **Text-range selection** on page content (no drag-select; static text isn't
@@ -143,6 +143,11 @@ required (it renders text-only — the CLI is the reliable transport).
   characters only.
 - **Downloads via `browser_download`** — gated to MCP-host approval; `click`
   the link instead and find the file in the instance's download dir.
+- **User extensions** — driver-owned instances launch with
+  `--disable-extensions` baked in, and launch args can't be injected
+  (verified: `Extensions.loadUnpacked` registers but never activates — no
+  content scripts, no background). For extension work use
+  lite-chrome-automation's `--extension` launch flag.
 
 ## Rules that matter
 
@@ -154,6 +159,6 @@ required (it renders text-only — the CLI is the reliable transport).
   screenshot evidence; the implementation lane owns the code change.
 - Anything `browse` doesn't cover: raw `cua-driver <tool> '<json>'` works —
   schemas via `cua-driver describe <tool>`; internals and gotchas in
-  `NOTES.md` beside this file. The official deep reference pack lives at
-  `~/.claude/skills/cua-driver/` (`BROWSER.md` for the browser lane) —
-  consult it before improvising past a refusal.
+  `NOTES.md` beside this file. The official deep reference pack is the
+  `cua-driver` skill (`BROWSER.md` for the browser lane) — consult it before
+  improvising past a refusal.

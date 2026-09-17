@@ -8,7 +8,7 @@ Agents are surprisingly capable at driving a browser *without* a framework — t
 
 This skill packages that glue into a ~200-line, zero-dependency Node script plus concise instructions, so an agent can go from "I need to inspect that live page" to evaluating JS in a real Chrome session in one command — even on session-gated sites, and even when several unaware agents need browsers at the same time.
 
-Use it when the work is **probing rather than driving** — DOM/geometry inspection, live mutation, page-internal state — or when heavier browser-automation tooling is not available. For verified end-to-end user flows (semantic addressing, per-action re-verification, evidence capture), a semantic automation layer remains the better fit; the two complement each other.
+Use it when the work is **probing rather than driving** — DOM/geometry inspection, live mutation, page-internal state — or when heavier browser-automation tooling is not available. For verified end-to-end user flows (semantic addressing, per-action re-verification, evidence capture), a semantic automation layer such as `cua-browser-automation` remains the better fit; the two complement each other.
 
 ## Features
 

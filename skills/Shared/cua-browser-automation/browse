@@ -508,8 +508,11 @@ def cmd_pointer(action, target=None, dx=None, dy=None, to=None):
         fail("pointer refused", raw)
 
 
-def cmd_shot(path=None):
+def cmd_shot(path=None, full=False):
     c = ctx(STATE)
+    if full:
+        cdp_shot_full(c, path)
+        return
     d = snap(c, shot=True)
     b64 = d.get("screenshot_png_b64")
     if not b64:
@@ -523,6 +526,25 @@ def cmd_shot(path=None):
     if sx and sy and (sx != 1 or sy != 1):
         print("png px -> css px scale: x=%.3f y=%.3f (divide measured PNG "
               "coords by this to get x,y for pointer/drag calls)" % (sx, sy))
+
+
+def cdp_shot_full(c, path):
+    """Full-page PNG: Page.captureScreenshot with captureBeyondViewport over
+    the instance's own DevTools endpoint (the driver's include_screenshot is
+    viewport-only)."""
+    _, pages = cdp_pages(c)
+    page = next((t for t in pages if t.get("url") == c.get("url")),
+                pages[0])
+    msg = ws_rpc(page["webSocketDebuggerUrl"],
+                 {"id": 1, "method": "Page.captureScreenshot",
+                  "params": {"format": "png", "captureBeyondViewport": True}})
+    data = (msg.get("result") or {}).get("data")
+    if not data:
+        fail("captureScreenshot failed", json.dumps(msg)[:400])
+    path = path or os.path.join(os.environ.get("TMPDIR", "/tmp"),
+                                "cua-browse-%s-%d.png" % (CTX, int(time.time())))
+    open(path, "wb").write(b64decode(data))
+    print(path)
 
 
 def cmd_text():
@@ -544,8 +566,11 @@ def cmd_eval(js):
     """Run page JS on the active tab. Tries the driver's execute_javascript
     first; on its standard-mode refusal, falls back transparently to
     Runtime.evaluate over the instance's own DevTools endpoint. Agents see
-    one command either way."""
+    one command either way. Prefix the argument with @ to read JS from a
+    file (avoids shell-quoting pain on multi-line probes)."""
     c = ctx(STATE)
+    if js.startswith("@"):
+        js = open(js[1:], encoding="utf-8").read()
     d, raw = cli("page", {"action": "execute_javascript", "pid": c["prepared_pid"],
                           "window_id": c["window_id"], "javascript": js})
     refused = (d or {}).get("status") == "refused" or "refus" in (raw or "")[:200]
@@ -555,9 +580,9 @@ def cmd_eval(js):
     print(raw)
 
 
-def cdp_pages(c):
+def cdp_discover(c):
     """Discover the prepared instance's DevTools endpoint. Returns
-    (http_port, [page-target dicts]) or fails."""
+    (http_port, browser_ws_url, [page-target dicts]) or fails."""
     p = subprocess.run(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN",
                         "-a", "-p", str(c["prepared_pid"])],
                        capture_output=True, text=True)
@@ -568,11 +593,20 @@ def cdp_pages(c):
                     "http://127.0.0.1:%s/json" % port, timeout=3) as r:
                 targets = json.loads(r.read())
             pages = [t for t in targets if t.get("type") == "page"]
-            if pages:
-                return int(port), pages
+            if not pages:
+                continue
+            with urllib.request.urlopen(
+                    "http://127.0.0.1:%s/json/version" % port, timeout=3) as r:
+                ver = json.loads(r.read())
+            return int(port), ver.get("webSocketDebuggerUrl"), pages
         except Exception:
             continue
     fail("no DevTools endpoint on pid %s" % c["prepared_pid"])
+
+
+def cdp_pages(c):
+    port, _, pages = cdp_discover(c)
+    return port, pages
 
 
 def ws_rpc(ws_url, message, timeout=15):
@@ -670,10 +704,12 @@ def cmd_cdp():
     custom WS scripts). The port is ephemeral (--remote-debugging-port=0);
     this discovers it from the pid."""
     c = ctx(STATE)
-    port, pages = cdp_pages(c)
+    port, bws, pages = cdp_discover(c)
     print("http http://127.0.0.1:%s  (e.g. playwright connectOverCDP)" % port)
+    print("browser ws %s" % bws)
     for t in pages:
         print("page %s\n  ws %s" % (t.get("url"), t.get("webSocketDebuggerUrl")))
+
 
 
 def cmd_read(target):
@@ -925,7 +961,9 @@ Commands (all take --ctx NAME):
   tree                      concise semantic outline (AX+DOM text tree)
   files TARGET PATH...      set <input type=file> to absolute local files
   hover|right-click|double-click TARGET ; scroll DY [TARGET] ; drag TARGET TO
-  shot [PATH]               tab-viewport PNG -> file; prints px->css scale
+  shot [PATH] [--full]      tab-viewport PNG -> file; prints px->css scale.
+                            --full captures the whole page (CDP
+                            captureBeyondViewport), not just the viewport
   text                      rendered page text (page get_text)
   read TARGET               one element's role/name/value/states (extract a
                             generated code or field value)
@@ -934,11 +972,13 @@ Commands (all take --ctx NAME):
   download TARGET DIR       save what TARGET links to into exact DIR (gated;
                             may need host approval)
   dom CSS                   CSS existence check (read-only)
-  cdp                       print the instance's DevTools http + page WS
-                            endpoints — Runtime.evaluate etc. via raw CDP or
-                            playwright connectOverCDP (escape hatch when
-                            `eval` is gated)
-  eval JS                   page execute_javascript (gated; usually refuses)
+  cdp                       print the instance's DevTools http + browser/page
+                            WS endpoints — raw CDP or playwright
+                            connectOverCDP (escape hatch when `eval` is gated)
+  eval JS|@FILE             JS in the page's MAIN world (page internals, not
+                            a sandboxed view): driver execute_javascript
+                            first, transparent Runtime.evaluate fallback on
+                            refusal. @FILE reads JS from disk.
   wait-for TEXT [--timeout S]   poll until text appears
   dialog inspect|accept|dismiss [--text T]
   tabs / tab SEL            list tabs; select active (index|tab_id|url-substr)
@@ -1015,7 +1055,7 @@ def dispatch(argv):
     elif cmd == "drag":
         cmd_pointer("drag", target=args[0], to=args[1])
     elif cmd == "shot":
-        cmd_shot(args[0] if args else None)
+        cmd_shot(args[0] if args else None, full=bool(full))
     elif cmd == "text":
         cmd_text()
     elif cmd == "dom":
