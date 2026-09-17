@@ -5,10 +5,10 @@ description: Determine the invoking Codex agent's actual thread, model, reasonin
 
 # Who Am I
 
-Run the local utility and report its result:
+Run the utility bundled in this skill (`<skill-dir>` is this skill's directory) and report its result:
 
 ```bash
-"${CODEX_HOME:-$HOME/.codex}/scripts/codex-who-am-i" --human
+"<skill-dir>/scripts/codex-who-am-i" --human
 ```
 
 Use the JSON form when another tool or script will consume the result. Add `--debug` only when resolution needs diagnosis; debug details go to stderr.
