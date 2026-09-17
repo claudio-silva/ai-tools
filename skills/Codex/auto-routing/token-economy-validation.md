@@ -8,10 +8,11 @@ State as of 2026-09-10 on `codex-cli 0.154.0`, desktop app running `multi_agent`
 
 | Part | Location |
 | --- | --- |
-| Skill (2 files) | `~/.codex/skills/token-economy/` — `SKILL.md`, `agents/openai.yaml` |
-| Hard dependency | `who-am-i` skill and `~/.codex/scripts/codex-who-am-i` |
-| Worker roles (5 files) | `~/.codex/agents/te_{retrieve,trace,build,plan,debug}.toml` |
-| Advisory roles (2 files) | `~/.codex/agents/te_advise.toml`, `te_advise_deep.toml` |
+| Skill (2 files) | `~/.codex/skills/auto-routing/` — `SKILL.md`, `agents/openai.yaml` |
+| Hard dependency | `who-am-i` skill — self-contained; utility bundled at `scripts/codex-who-am-i` |
+| Roles (9 files) | `~/.codex/agents/te_*.toml` — shipped in `te-agents/`, installed by `bin/install` |
+
+*The v1 snapshot this section originally recorded (2026-09-10): skill at `~/.codex/skills/token-economy/`; roles `te_{retrieve,trace,build,plan,debug}.toml` plus `te_advise.toml` and `te_advise_deep.toml`; `who-am-i` utility at `~/.codex/scripts/codex-who-am-i`.*
 
 The skill is explicit-invocation only (`allow_implicit_invocation: false`). Roles are registered globally, discovered at process start, and are a separate install from the skill: a missing role does **not** raise an error, it yields a generic child with none of its instructions. Every role therefore opens its reply with `WORKER: <role>` as a fail-closed binding check.
 
@@ -128,7 +129,7 @@ Repricing the same measured token counts for a `sol/medium` parent delegating to
 
 ## Measured: `who-am-i` resolves the self-knowledge problem
 
-A `terra/medium` parent ran `$CODEX_HOME/scripts/codex-who-am-i` and reported `gpt-5.6-terra` / `medium`; a `te_retrieve` child spawned with `fork_turns="none"` ran the same utility and reported `gpt-5.6-luna` / `low`. Both were classified `effective-runtime-value` with **high** confidence, and both matched the pins. Outside a Codex session the same utility falls back to `configured-default` at low confidence, correctly labelled, because it has no `CODEX_THREAD_ID` to correlate.
+A `terra/medium` parent ran the `who-am-i` utility (`scripts/codex-who-am-i`, bundled in the skill) and reported `gpt-5.6-terra` / `medium`; a `te_retrieve` child spawned with `fork_turns="none"` ran the same utility and reported `gpt-5.6-luna` / `low`. Both were classified `effective-runtime-value` with **high** confidence, and both matched the pins. Outside a Codex session the same utility falls back to `configured-default` at low confidence, correctly labelled, because it has no `CODEX_THREAD_ID` to correlate.
 
 JSON is its default output; there is no `--json` flag. The skill therefore has a hard dependency on that utility, and treats anything other than `effective-runtime-value` at high confidence as "position unknown".
 
@@ -185,14 +186,14 @@ Three later constructs have also been dropped from the skill, each for a stated 
 
 Date 2026-09-12. Produced in a review session (Cursor, Claude) over the installed v1 skill and this record; no Codex probes were run in that session, so everything in this part is **design plus public data**, not measurement. Numbers here are for the record and for designing tests; the skill itself now carries **no numbers**, by decision (see *Design decisions*).
 
-## Where the drafts are
+## Where the artifacts live
 
 | Artifact | Path | Status |
 | --- | --- | --- |
-| Rewritten skill | `/Users/claudiosilva/Projects2/Skills/Codex/auto-routing/SKILL.md` (skill name `auto-routing`) | draft; install with `bin/install` |
-| Nine role TOMLs | `te-agents/te_*.toml` in the same project | draft; `bin/install` copies them to `~/.codex/agents/` and removes `te_debug.toml` and `te_advise_deep.toml`; app restart needed for role discovery |
+| Skill | `skills/Codex/auto-routing/SKILL.md` in the `ai-tools` repo (`~/My-GitHub-Projects/ai-tools`) | installed at `~/.codex/skills/auto-routing/` via `bin/install` |
+| Nine role TOMLs | `te-agents/te_*.toml` beside it | installed at `~/.codex/agents/`; `te_debug.toml` and `te_advise_deep.toml` removed |
 | Skill metadata | `agents/openai.yaml` | `allow_implicit_invocation: false`; invocation is `$auto-routing` |
-| Installed v1 | `~/.codex/skills/token-economy/SKILL.md`, `~/.codex/agents/te_{retrieve,trace,build,plan,debug,advise,advise_deep}.toml` | still the live version until `bin/install` runs |
+| Former v1 | `~/.codex/skills/token-economy/`, `~/.codex/agents/te_{retrieve,trace,build,plan,debug,advise,advise_deep}.toml` | removed by `bin/install` |
 
 ## The user's goal, restated
 
