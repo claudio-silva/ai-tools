@@ -13,7 +13,13 @@ Verified behavior of Cursor subagents: where agent files live, how the Task tool
 
 ## Install
 
-Copy this folder to `~/.cursor/skills/working-with-cursor-subagents/` — or any skills directory; it's pure documentation.
+From the repository root:
+
+```sh
+./bin/skills install working-with-cursor-subagents
+```
+
+`Cursor` installs this skill for Cursor only. `manifest.json` copies `SKILL.md`. See the [skills README](../../README.md).
 
 ## Contents
 

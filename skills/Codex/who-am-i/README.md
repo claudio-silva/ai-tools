@@ -26,7 +26,13 @@ scripts/codex-who-am-i --debug    # resolution decisions on stderr (no conversat
 
 ## Install
 
-Copy this folder to `~/.codex/skills/who-am-i/` and restart Codex.
+From the repository root:
+
+```sh
+./bin/skills install who-am-i
+```
+
+`Codex` installs this skill for Codex only. `manifest.json` copies `SKILL.md`, `scripts/`, and `agents/`. Restart Codex afterwards. See the [skills README](../../README.md).
 
 ## Contents
 

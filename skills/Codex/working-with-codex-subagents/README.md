@@ -15,7 +15,13 @@ A verified field guide to Codex custom subagents — where agent definitions liv
 
 ## Install
 
-Copy this folder to `~/.codex/skills/working-with-codex-subagents/` — or any skills directory; it's pure documentation and reads fine anywhere.
+From the repository root:
+
+```sh
+./bin/skills install working-with-codex-subagents
+```
+
+`Codex` installs this skill for Codex only. `manifest.json` copies `SKILL.md`. See the [skills README](../../README.md).
 
 ## Contents
 

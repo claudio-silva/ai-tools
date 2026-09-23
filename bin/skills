@@ -1,0 +1,1093 @@
+#!/usr/bin/env python3
+"""Install, uninstall, and list skills from this repository."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+from collections import Counter
+from dataclasses import dataclass, field
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SKILLS_ROOT = REPO_ROOT / "skills"
+
+PLATFORM_ORDER = ("cursor", "codex", "claude-code", "devin")
+
+# Folder name under skills/ → platforms that skill can be installed to.
+FOLDER_PLATFORMS = {
+    "Shared": ("cursor", "codex", "claude-code", "devin"),
+    "Cursor": ("cursor",),
+    "Codex": ("codex",),
+    "Claude": ("claude-code",),
+    "Devin": ("devin",),
+}
+
+SKIP_DIR_NAMES = {"__pycache__", ".git"}
+VARIABLES = ("SKILLS_DIR", "SKILL_DIR", "PLATFORM_HOME", "CODEX_HOME", "HOME")
+
+HELP = """\
+Usage: ./bin/skills <command> [skill...] [options]
+
+Install skills from this repository onto Cursor, Codex, Claude Code, and Devin.
+
+The folder under skills/ selects the platforms a skill supports: Shared
+(all four), Cursor, Codex, Claude, or Devin.
+
+Commands:
+  install [skill...]     Install skills. Defaults to --global.
+  uninstall [skill...]   Remove skills this tool installed. Defaults to --global.
+  list [skill...]        List skills in this repository, grouped by platform.
+  installed [skill...]   List skills installed on each platform.
+                         Defaults to both global and local.
+  help                   Show this help.
+
+Options:
+  -g, --global           User-level directories. Default for install and
+                         uninstall. Combine with --local to use both scopes.
+                         For installed, show the user-level directories.
+  -l, --local            Project directories. Combine with --global to use
+                         both scopes. For installed, show the project.
+  -C, --directory DIR    Project directory for --local. Default: current directory.
+  -p, --platform NAME    cursor, codex, claude-code, or devin. Repeat the flag,
+                         or pass a comma-separated list.
+  -a, --all              install: every skill in the repo. uninstall: every
+                         recorded install for the selected scope and platforms.
+  -n, --dry-run          Show what install or uninstall would change.
+  -h, --help             Show this help.
+
+Install locations:
+
+  Platform      Global                    Local
+  cursor        ~/.cursor/skills          .cursor/skills
+  codex         $CODEX_HOME/skills        .agents/skills
+  claude-code   ~/.claude/skills          .claude/skills
+  devin         ~/.config/devin/skills    .devin/skills
+
+$CODEX_HOME defaults to ~/.codex. Devin paths are for Devin for Terminal.
+Pass skill names to list or installed to show only those skills.
+Details are in skills/README.md.
+
+Examples:
+  ./bin/skills list
+  ./bin/skills installed
+  ./bin/skills install --all
+  ./bin/skills install removebg-cli --platform cursor
+  ./bin/skills install --local --directory ~/src/my-app affinity-sdk
+  ./bin/skills uninstall auto-routing
+  ./bin/skills installed --global --platform codex
+"""
+
+
+class SkillError(Exception):
+    """A user-facing failure. The message is printed as-is."""
+
+
+@dataclass(frozen=True)
+class Skill:
+    name: str
+    folder: str
+    path: Path
+    platforms: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Target:
+    platform: str
+    scope: str
+    project: Path | None
+    skills_dir: Path
+    platform_home: Path
+    skill_dir: Path
+
+    @property
+    def project_key(self) -> str:
+        return str(self.project.resolve()) if self.project else ""
+
+    def key(self, skill_name: str) -> tuple[str, str, str, str]:
+        return (skill_name, self.platform, self.scope, self.project_key)
+
+
+@dataclass
+class Action:
+    kind: str  # copy, remove, keep
+    path: Path
+    src: Path | None = None
+    note: str = ""
+
+
+@dataclass
+class Plan:
+    skill: Skill
+    target: Target
+    actions: list[Action] = field(default_factory=list)
+    external_files: list[str] = field(default_factory=list)
+
+
+def home() -> Path:
+    return Path.home()
+
+
+def codex_home() -> Path:
+    raw = os.environ.get("CODEX_HOME", str(home() / ".codex"))
+    return Path(raw).expanduser()
+
+
+def state_file() -> Path:
+    base = os.environ.get("XDG_STATE_HOME")
+    root = Path(base).expanduser() if base else home() / ".local" / "state"
+    return root / "ai-tools" / "installs.json"
+
+
+def display(path: Path) -> str:
+    resolved = path.expanduser().resolve()
+    try:
+        rel = resolved.relative_to(home().resolve())
+    except ValueError:
+        return str(resolved)
+    text = rel.as_posix()
+    return "~" if text == "." else "~/" + text
+
+
+def die(message: str) -> None:
+    raise SkillError(message)
+
+
+def load_state() -> dict:
+    path = state_file()
+    if not path.exists():
+        return {"version": 1, "installs": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        die(f"{path}: {exc}")
+    if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("installs"), list):
+        die(f"{path}: unrecognized install record")
+    return data
+
+
+def save_state(data: dict) -> None:
+    path = state_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def entry_key(entry: dict) -> tuple[str, str, str, str]:
+    return (entry["skill"], entry["platform"], entry["scope"], entry.get("project") or "")
+
+
+def trash_bin() -> str:
+    found = shutil.which("trash")
+    if not found:
+        die("trash is required on PATH (macOS /usr/bin/trash, or the trash CLI)")
+    return found
+
+
+def trash_path(path: Path) -> None:
+    # macOS /usr/bin/trash treats "--" as a filename, not an end-of-options
+    # marker. Destinations are absolute, so a leading dash is not a concern.
+    result = subprocess.run(
+        [trash_bin(), str(path)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        die(f"trash {path} failed: {detail or 'exit ' + str(result.returncode)}")
+
+
+def present(path: Path) -> bool:
+    return path.is_symlink() or path.exists()
+
+
+def discover_skills() -> list[Skill]:
+    if not SKILLS_ROOT.is_dir():
+        die(f"skills directory not found: {SKILLS_ROOT}")
+    found: list[Skill] = []
+    names: dict[str, Path] = {}
+    for folder in sorted(SKILLS_ROOT.iterdir(), key=lambda p: p.name):
+        if not folder.is_dir() or folder.name.startswith("."):
+            continue
+        platforms = FOLDER_PLATFORMS.get(folder.name)
+        if platforms is None:
+            known = ", ".join(FOLDER_PLATFORMS)
+            die(f"unknown platform folder skills/{folder.name}; expected one of: {known}")
+        for skill_dir in sorted(folder.iterdir(), key=lambda p: p.name):
+            if not skill_dir.is_dir() or skill_dir.name.startswith("."):
+                continue
+            if not (skill_dir / "SKILL.md").is_file():
+                die(f"{skill_dir.relative_to(REPO_ROOT)} is missing SKILL.md")
+            if not (skill_dir / "manifest.json").is_file():
+                die(f"{skill_dir.relative_to(REPO_ROOT)} is missing manifest.json")
+            if skill_dir.name in names:
+                die(
+                    f"duplicate skill name {skill_dir.name}: "
+                    f"{names[skill_dir.name].relative_to(REPO_ROOT)} and "
+                    f"{skill_dir.relative_to(REPO_ROOT)}"
+                )
+            names[skill_dir.name] = skill_dir
+            found.append(Skill(skill_dir.name, folder.name, skill_dir, platforms))
+    return found
+
+
+def load_manifest(skill: Skill) -> dict:
+    path = skill.path / "manifest.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        die(f"{path.relative_to(REPO_ROOT)}: {exc}")
+    if not isinstance(data, dict):
+        die(f"{path.relative_to(REPO_ROOT)}: manifest must be an object")
+    extra = set(data) - {"install", "remove"}
+    if extra:
+        die(f"{path.relative_to(REPO_ROOT)}: unknown keys: {', '.join(sorted(extra))}")
+    install = data.get("install")
+    if not isinstance(install, list) or not install:
+        die(f"{path.relative_to(REPO_ROOT)}: install must be a non-empty list")
+    remove = data.get("remove", [])
+    if not isinstance(remove, list) or not all(isinstance(item, str) for item in remove):
+        die(f"{path.relative_to(REPO_ROOT)}: remove must be a list of paths")
+    for item in install:
+        if isinstance(item, str):
+            if not item:
+                die(f"{path.relative_to(REPO_ROOT)}: empty install path")
+        elif isinstance(item, dict):
+            if set(item) != {"from", "to"} or not isinstance(item["from"], str) or not isinstance(item["to"], str):
+                die(f"{path.relative_to(REPO_ROOT)}: install objects need string from and to")
+            if not item["from"] or not item["to"]:
+                die(f"{path.relative_to(REPO_ROOT)}: empty from or to")
+        else:
+            die(f"{path.relative_to(REPO_ROOT)}: install entries must be strings or objects")
+    return {"install": install, "remove": remove}
+
+
+def platform_paths(platform: str, scope: str, project: Path | None) -> tuple[Path, Path]:
+    """Return (skills_dir, platform_home) for a platform and scope."""
+    if scope == "local":
+        if project is None:
+            die("local scope needs a project directory")
+        local = {
+            "cursor": (project / ".cursor" / "skills", project / ".cursor"),
+            "codex": (project / ".agents" / "skills", project / ".codex"),
+            "claude-code": (project / ".claude" / "skills", project / ".claude"),
+            "devin": (project / ".devin" / "skills", project / ".devin"),
+        }
+        return local[platform]
+    global_paths = {
+        "cursor": (home() / ".cursor" / "skills", home() / ".cursor"),
+        "codex": (codex_home() / "skills", codex_home()),
+        "claude-code": (home() / ".claude" / "skills", home() / ".claude"),
+        "devin": (home() / ".config" / "devin" / "skills", home() / ".config" / "devin"),
+    }
+    return global_paths[platform]
+
+
+def make_target(platform: str, scope: str, project: Path | None, skill_name: str) -> Target:
+    skills_dir, platform_home = platform_paths(platform, scope, project)
+    return Target(platform, scope, project, skills_dir, platform_home, skills_dir / skill_name)
+
+
+def variables_for(target: Target) -> dict[str, str]:
+    return {
+        "SKILL_DIR": str(target.skill_dir),
+        "SKILLS_DIR": str(target.skills_dir),
+        "PLATFORM_HOME": str(target.platform_home),
+        "CODEX_HOME": str(codex_home()),
+        "HOME": str(home()),
+    }
+
+
+def expand_vars(text: str, variables: dict[str, str], where: str) -> str:
+    out = text
+    for token in VARIABLES:
+        out = out.replace("$" + token, variables[token])
+    if "$" in out:
+        for token in text.replace("$$", "").split("$")[1:]:
+            name = []
+            for ch in token:
+                if ch.isalnum() or ch == "_":
+                    name.append(ch)
+                else:
+                    break
+            ident = "".join(name)
+            if ident and ident not in VARIABLES:
+                die(f"{where}: unknown variable ${ident}")
+    # Path() drops a trailing slash; "to": "$CODEX_HOME/agents/" must stay a directory.
+    trailing_slash = out.endswith("/")
+    expanded = Path(out).expanduser()
+    if not expanded.is_absolute():
+        die(f"{where}: {text} must expand to an absolute path")
+    rendered = str(expanded)
+    if trailing_slash and not rendered.endswith("/"):
+        rendered += "/"
+    return rendered
+
+
+def allowed_roots(target: Target) -> list[Path]:
+    roots = [
+        target.skills_dir,
+        target.platform_home,
+        codex_home(),
+        home() / ".cursor",
+        home() / ".codex",
+        home() / ".claude",
+        home() / ".config" / "devin",
+        home() / ".agents",
+    ]
+    if target.project is not None:
+        roots.append(target.project)
+    return roots
+
+
+def protected_paths(target: Target) -> set[Path]:
+    c = codex_home()
+    h = home()
+    paths = [
+        target.skills_dir,
+        target.platform_home,
+        c,
+        c / "agents",
+        c / "skills",
+        h,
+        h / ".cursor",
+        h / ".cursor" / "skills",
+        h / ".codex",
+        h / ".claude",
+        h / ".claude" / "skills",
+        h / ".config" / "devin",
+        h / ".config" / "devin" / "skills",
+        h / ".agents",
+        h / ".agents" / "skills",
+    ]
+    if target.project is not None:
+        project = target.project
+        paths.extend(
+            [
+                project,
+                project / ".cursor",
+                project / ".cursor" / "skills",
+                project / ".codex",
+                project / ".agents",
+                project / ".agents" / "skills",
+                project / ".claude",
+                project / ".claude" / "skills",
+                project / ".devin",
+                project / ".devin" / "skills",
+            ]
+        )
+    return {p.resolve() for p in paths}
+
+
+def resolve_allowed(path: Path, target: Target, purpose: str) -> Path:
+    resolved = path.expanduser().resolve()
+    if resolved in protected_paths(target):
+        die(f"{purpose} {display(resolved)} is a protected directory")
+    for root in allowed_roots(target):
+        root_resolved = root.resolve()
+        if resolved.is_relative_to(root_resolved) and resolved != root_resolved:
+            return resolved
+    die(f"{purpose} {display(resolved)} is outside the install directories for {target.platform} ({target.scope})")
+
+
+def source_ok(skill: Skill, relative: str, *, glob: bool) -> None:
+    if not relative or relative.startswith(("/", "~")):
+        die(f"{skill.name}: source must stay inside the skill directory ({relative})")
+    parts = Path(relative).parts
+    if ".." in parts:
+        die(f"{skill.name}: source must not contain .. ({relative})")
+    if "**" in relative:
+        die(f"{skill.name}: ** globs are not allowed ({relative})")
+    has_glob = any("*" in part or "?" in part for part in parts)
+    if glob and not has_glob:
+        die(f"{skill.name}: expected a glob such as dir/*.toml ({relative})")
+    if not glob and has_glob:
+        die(f"{skill.name}: unexpected glob in {relative}")
+
+
+def ignored_file(relative: Path) -> bool:
+    if relative.name in {".DS_Store"} or relative.suffix == ".pyc":
+        return True
+    return any(part in SKIP_DIR_NAMES or part.startswith(".") for part in relative.parts)
+
+
+def files_under(skill: Skill, src: Path) -> list[Path]:
+    if src.is_file():
+        return [src]
+    if not src.is_dir():
+        die(f"{skill.name}: not a file or directory: {src.relative_to(skill.path)}")
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(src):
+        dirnames[:] = [name for name in dirnames if name not in SKIP_DIR_NAMES and not name.startswith(".")]
+        for name in filenames:
+            path = Path(dirpath) / name
+            rel = path.relative_to(src)
+            if ignored_file(rel) or name.startswith("."):
+                continue
+            found.append(path)
+    if not found:
+        die(f"{skill.name}: {src.relative_to(skill.path)} has no files to install")
+    return found
+
+
+def expand_install(skill: Skill, manifest: dict, target: Target) -> list[tuple[Path, Path]]:
+    variables = variables_for(target)
+    pairs: list[tuple[Path, Path]] = []
+    seen: dict[Path, Path] = {}
+    where = f"{skill.folder}/{skill.name}"
+
+    def add(src: Path, dest: Path) -> None:
+        resolved_src = src.resolve()
+        if not resolved_src.is_relative_to(skill.path.resolve()):
+            die(f"{skill.name}: source escapes the skill directory ({src})")
+        resolved_dest = resolve_allowed(dest, target, f"{skill.name} destination")
+        previous = seen.get(resolved_dest)
+        if previous is not None and previous != resolved_src:
+            die(f"{skill.name}: {display(resolved_dest)} is installed twice")
+        seen[resolved_dest] = resolved_src
+        pairs.append((resolved_src, resolved_dest))
+
+    for entry in manifest["install"]:
+        if isinstance(entry, str):
+            source_ok(skill, entry, glob=False)
+            src = skill.path / entry
+            if not src.exists():
+                die(f"{skill.name}: missing {entry}")
+            for file in files_under(skill, src):
+                rel = file.relative_to(skill.path)
+                add(file, target.skill_dir / rel)
+            continue
+        source = entry["from"]
+        dest_text = expand_vars(entry["to"], variables, f"{where} to")
+        is_glob = any("*" in part or "?" in part for part in Path(source).parts)
+        if is_glob:
+            source_ok(skill, source, glob=True)
+            matches = [
+                path
+                for path in sorted(skill.path.glob(source))
+                if path.is_file() and not ignored_file(path.relative_to(skill.path))
+            ]
+            if not matches:
+                die(f"{skill.name}: no files matched {source}")
+            for file in matches:
+                add(file, Path(dest_text) / file.name)
+            continue
+        source_ok(skill, source, glob=False)
+        src = skill.path / source
+        if not src.exists():
+            die(f"{skill.name}: missing {source}")
+        if src.is_dir():
+            for file in files_under(skill, src):
+                add(file, Path(dest_text) / file.relative_to(src))
+            continue
+        dest = Path(dest_text)
+        if dest_text.endswith("/") or (dest.exists() and dest.is_dir()):
+            dest = dest / src.name
+        add(src, dest)
+
+    skill_md = target.skill_dir.resolve() / "SKILL.md"
+    if not any(dest == skill_md for _, dest in pairs):
+        die(f"{skill.name}: manifest must install SKILL.md into the skill directory")
+    return pairs
+
+
+def expand_remove(skill_name: str, manifest: dict, target: Target) -> list[Path]:
+    variables = variables_for(target)
+    paths: list[Path] = []
+    for entry in manifest["remove"]:
+        text = expand_vars(entry, variables, f"{skill_name} remove")
+        paths.append(resolve_allowed(Path(text), target, f"{skill_name} remove"))
+    return paths
+
+
+def still_needed(installs: list[dict], path: Path, skip_keys: set[tuple[str, str, str, str]]) -> bool:
+    text = str(path.resolve())
+    for entry in installs:
+        if entry_key(entry) in skip_keys:
+            continue
+        skill_dir = entry.get("skillDir", "")
+        if text == skill_dir or text in entry.get("externalFiles", []):
+            return True
+        if skill_dir and text.startswith(skill_dir.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def find_entry(installs: list[dict], key: tuple[str, str, str, str]) -> dict | None:
+    for entry in installs:
+        if entry_key(entry) == key:
+            return entry
+    return None
+
+
+def stale_files(skill_dir: Path, keep: set[str]) -> list[Path]:
+    if not skill_dir.is_dir() or skill_dir.is_symlink():
+        return []
+    stale: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(skill_dir):
+        dirnames[:] = [name for name in dirnames if name not in SKIP_DIR_NAMES]
+        for name in filenames:
+            path = Path(dirpath) / name
+            rel = path.relative_to(skill_dir).as_posix()
+            if rel not in keep:
+                stale.append(path.resolve())
+    return stale
+
+
+def empty_dirs(skill_dir: Path, keep: set[str]) -> list[Path]:
+    """Directories that contain nothing the new install keeps.
+
+    A directory stays when any installed path is inside it, including files
+    that are not on disk yet.
+    """
+    if not skill_dir.is_dir() or skill_dir.is_symlink():
+        return []
+    doomed: list[Path] = []
+    doomed_set: set[Path] = set()
+    for dirpath, dirnames, _filenames in os.walk(skill_dir, topdown=False):
+        path = Path(dirpath)
+        if path == skill_dir:
+            continue
+        rel_dir = path.relative_to(skill_dir).as_posix()
+        keep_under = any(rel.startswith(rel_dir + "/") for rel in keep)
+        living_children = [name for name in dirnames if (path / name) not in doomed_set]
+        if not keep_under and not living_children:
+            doomed.append(path)
+            doomed_set.add(path)
+    return doomed
+
+
+def plan_install(
+    skill: Skill,
+    target: Target,
+    state: dict,
+    skip_keys: set[tuple[str, str, str, str]],
+) -> Plan:
+    manifest = load_manifest(skill)
+    if target.skill_dir.is_symlink():
+        die(f"{display(target.skill_dir)} is a symlink; this tool only manages real directories")
+    key = target.key(skill.name)
+    current = find_entry(state["installs"], key)
+    if target.skill_dir.exists() and current is None:
+        die(
+            f"{display(target.skill_dir)} already exists and was not installed by this tool. "
+            "Move it aside, then install again."
+        )
+    if current is not None and Path(current["skillDir"]).resolve() != target.skill_dir.resolve():
+        die(f"recorded install path for {skill.name} does not match {display(target.skill_dir)}")
+
+    pairs = expand_install(skill, manifest, target)
+    removes = expand_remove(skill.name, manifest, target)
+    dests = {dest for _, dest in pairs}
+    skill_root = target.skill_dir.resolve()
+    for path in removes:
+        if path == skill_root or any(dest == path or dest.is_relative_to(path) for dest in dests):
+            die(f"{skill.name}: remove path overlaps an installed file: {display(path)}")
+
+    inside: set[str] = set()
+    external: list[str] = []
+    for dest in dests:
+        if dest.is_relative_to(skill_root):
+            inside.add(dest.relative_to(skill_root).as_posix())
+        else:
+            external.append(str(dest))
+
+    actions: list[Action] = []
+    for path in removes:
+        if not present(path):
+            continue
+        if still_needed(state["installs"], path, skip_keys):
+            actions.append(Action("keep", path, note="still used by another install"))
+        else:
+            actions.append(Action("remove", path))
+    for src, dest in pairs:
+        actions.append(Action("copy", dest, src=src))
+    if current is not None:
+        for path in stale_files(target.skill_dir, inside):
+            if path not in dests:
+                actions.append(Action("remove", path))
+        for path in empty_dirs(target.skill_dir, inside):
+            actions.append(Action("remove", path))
+        old_external = [Path(item) for item in current.get("externalFiles", [])]
+        for path in old_external:
+            if str(path.resolve()) in external:
+                continue
+            if still_needed(state["installs"], path, skip_keys):
+                actions.append(Action("keep", path.resolve(), note="still used by another install"))
+            elif present(path):
+                actions.append(Action("remove", path.resolve()))
+    return Plan(skill, target, actions, external)
+
+
+def plan_uninstall(
+    skill_name: str,
+    target: Target,
+    manifest: dict | None,
+    state: dict,
+    skip_keys: set[tuple[str, str, str, str]],
+) -> Plan | None:
+    current = find_entry(state["installs"], target.key(skill_name))
+    if current is None:
+        return None
+    actions: list[Action] = []
+    if manifest is not None:
+        for path in expand_remove(skill_name, manifest, target):
+            if not present(path):
+                continue
+            if still_needed(state["installs"], path, skip_keys):
+                actions.append(Action("keep", path, note="still used by another install"))
+            else:
+                actions.append(Action("remove", path))
+    for item in current.get("externalFiles", []):
+        path = Path(item)
+        if still_needed(state["installs"], path, skip_keys):
+            actions.append(Action("keep", path, note="still used by another install"))
+        elif present(path):
+            actions.append(Action("remove", path))
+    skill_dir = Path(current["skillDir"])
+    if still_needed(state["installs"], skill_dir, skip_keys):
+        actions.append(Action("keep", skill_dir, note="still used by another install"))
+    elif present(skill_dir):
+        actions.append(Action("remove", skill_dir))
+    dummy = Skill(skill_name, "", Path("."), ())
+    return Plan(dummy, target, actions, [])
+
+
+def apply_plan(plan: Plan, dry_run: bool) -> None:
+    if dry_run:
+        return
+    # External deletes first, then copies, then leftovers inside the skill
+    # directory. Files go before directories so a parent is emptied first.
+    removes = [action for action in plan.actions if action.kind == "remove"]
+    copies = [action for action in plan.actions if action.kind == "copy"]
+    skill_root = plan.target.skill_dir.resolve()
+    outside = [action for action in removes if not _inside(action.path, skill_root) or action.path.resolve() == skill_root]
+    inside = [action for action in removes if _inside(action.path, skill_root) and action.path.resolve() != skill_root]
+    for action in removal_order(outside):
+        if present(action.path):
+            trash_path(action.path)
+    for action in copies:
+        dest = action.path
+        if dest.is_symlink():
+            trash_path(dest)
+        elif dest.exists() and dest.is_dir():
+            die(f"destination is a directory: {display(dest)}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(action.src, dest)
+    for action in removal_order(inside):
+        if present(action.path):
+            trash_path(action.path)
+
+
+def removal_order(actions: list[Action]) -> list[Action]:
+    files = [action for action in actions if action.path.is_symlink() or not action.path.is_dir()]
+    directories = [action for action in actions if not action.path.is_symlink() and action.path.is_dir()]
+    directories.sort(key=lambda action: len(action.path.resolve().parts), reverse=True)
+    return files + directories
+
+
+def _inside(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def record_install(state: dict, plan: Plan) -> None:
+    key = plan.target.key(plan.skill.name)
+    state["installs"] = [entry for entry in state["installs"] if entry_key(entry) != key]
+    state["installs"].append(
+        {
+            "skill": plan.skill.name,
+            "folder": plan.skill.folder,
+            "platform": plan.target.platform,
+            "scope": plan.target.scope,
+            "project": plan.target.project_key,
+            "skillDir": str(plan.target.skill_dir.resolve()),
+            "externalFiles": plan.external_files,
+        }
+    )
+
+
+def drop_install(state: dict, skill_name: str, target: Target) -> None:
+    key = target.key(skill_name)
+    state["installs"] = [entry for entry in state["installs"] if entry_key(entry) != key]
+
+
+def print_plan(heading: str, plan: Plan) -> None:
+    print(heading)
+    skill_root = plan.target.skill_dir.resolve()
+    inside: list[str] = []
+    outside: list[Action] = []
+    for action in plan.actions:
+        if action.kind == "copy" and _inside(action.path, skill_root):
+            inside.append(action.path.resolve().relative_to(skill_root).as_posix())
+        elif action.kind == "copy":
+            outside.append(action)
+    if inside:
+        print(f"  {display(plan.target.skill_dir)}/")
+        for rel in inside:
+            print(f"    {rel}")
+    for action in outside:
+        print(f"  copy {display(action.path)}")
+    for action in plan.actions:
+        if action.kind == "remove":
+            print(f"  remove {display(action.path)}")
+        elif action.kind == "keep":
+            print(f"  keep {display(action.path)} ({action.note})")
+    print()
+
+
+def selected_scopes(args: argparse.Namespace, default: tuple[str, ...]) -> list[str]:
+    chosen: list[str] = []
+    if args.scope_global:
+        chosen.append("global")
+    if args.local:
+        chosen.append("local")
+    return chosen or list(default)
+
+
+def selected_platforms(values: list[str]) -> list[str] | None:
+    if not values:
+        return None
+    chosen: list[str] = []
+    for value in values:
+        for part in value.split(","):
+            name = part.strip()
+            if not name:
+                continue
+            if name not in PLATFORM_ORDER:
+                die(f"unknown platform {name!r}; expected {', '.join(PLATFORM_ORDER)}")
+            if name not in chosen:
+                chosen.append(name)
+    return chosen
+
+
+def project_dir(args: argparse.Namespace) -> Path:
+    raw = args.directory if args.directory is not None else Path.cwd()
+    path = raw.expanduser().resolve()
+    if not path.is_dir():
+        die(f"project directory does not exist: {path}")
+    return path
+
+
+def platforms_for_skill(skill: Skill, platform_filter: list[str] | None, *, strict: bool) -> list[str]:
+    if platform_filter is None:
+        return list(skill.platforms)
+    unsupported = [name for name in platform_filter if name not in skill.platforms]
+    if unsupported and strict:
+        supported = ", ".join(skill.platforms)
+        die(
+            f"{skill.name} ({skill.folder}) cannot target {', '.join(unsupported)}; "
+            f"it supports {supported}"
+        )
+    return [name for name in skill.platforms if name in platform_filter]
+
+
+def require_skill_args(args: argparse.Namespace, command: str) -> None:
+    args.skills = list(dict.fromkeys(args.skills))
+    if args.all and args.skills:
+        die("pass skill names or --all, not both")
+    if command in ("install", "uninstall") and not args.all and not args.skills:
+        die("name at least one skill, or pass --all")
+    if command in ("list", "installed"):
+        if args.all:
+            die(f"--all does not apply to {command}")
+        if args.dry_run:
+            die(f"--dry-run does not apply to {command}")
+    if command == "list" and (args.scope_global or args.local or args.directory is not None):
+        die("list shows skills in this repository; use installed for global and local installs")
+
+
+def skills_by_name(skills: list[Skill]) -> dict[str, Skill]:
+    return {skill.name: skill for skill in skills}
+
+
+def resolve_requested(skills: list[Skill], names: list[str], state: dict) -> list[str]:
+    known = set(skills_by_name(skills))
+    known.update(entry["skill"] for entry in state["installs"])
+    missing = [name for name in names if name not in known]
+    if missing:
+        die("unknown skill: " + ", ".join(missing))
+    return names
+
+
+def resolve_repo_names(skills: list[Skill], names: list[str]) -> None:
+    known = set(skills_by_name(skills))
+    missing = [name for name in names if name not in known]
+    if missing:
+        die("unknown skill: " + ", ".join(missing))
+
+
+def cmd_install(args: argparse.Namespace, skills: list[Skill], state: dict) -> None:
+    scopes = selected_scopes(args, ("global",))
+    platform_filter = selected_platforms(args.platform)
+    project = project_dir(args) if "local" in scopes else None
+    if args.directory is not None and "local" not in scopes:
+        die("--directory is used with --local")
+    catalog = skills_by_name(skills)
+    if args.all:
+        chosen = []
+        for skill in skills:
+            platforms = platforms_for_skill(skill, platform_filter, strict=False)
+            if platforms:
+                chosen.append((skill, platforms))
+        if not chosen:
+            die("no skills match the selected platforms")
+    else:
+        resolve_requested(skills, args.skills, state)
+        chosen = []
+        for name in args.skills:
+            skill = catalog.get(name)
+            if skill is None:
+                die(f"unknown skill: {name}")
+            chosen.append((skill, platforms_for_skill(skill, platform_filter, strict=True)))
+
+    plans: list[Plan] = []
+    skip_keys: set[tuple[str, str, str, str]] = set()
+    targets: list[tuple[Skill, Target]] = []
+    for skill, platforms in chosen:
+        for scope in scopes:
+            for platform in platforms:
+                target = make_target(platform, scope, project, skill.name)
+                targets.append((skill, target))
+                skip_keys.add(target.key(skill.name))
+    for skill, target in targets:
+        plans.append(plan_install(skill, target, state, skip_keys))
+
+    if args.dry_run:
+        print("dry-run: no files will be changed")
+    for plan in plans:
+        verb = "would install" if args.dry_run else "installed"
+        print_plan(f"{verb} {plan.skill.name} → {plan.target.platform} ({plan.target.scope})", plan)
+        apply_plan(plan, args.dry_run)
+        if not args.dry_run:
+            record_install(state, plan)
+            save_state(state)
+
+
+def cmd_uninstall(args: argparse.Namespace, skills: list[Skill], state: dict) -> None:
+    scopes = selected_scopes(args, ("global",))
+    platform_filter = selected_platforms(args.platform)
+    project = project_dir(args) if "local" in scopes else None
+    if args.directory is not None and "local" not in scopes:
+        die("--directory is used with --local")
+    catalog = skills_by_name(skills)
+
+    selected: list[tuple[str, Target, dict | None]] = []
+    if args.all:
+        for entry in state["installs"]:
+            if entry["scope"] not in scopes:
+                continue
+            if platform_filter is not None and entry["platform"] not in platform_filter:
+                continue
+            if entry["scope"] == "local" and entry.get("project") != str(project):
+                continue
+            skill = catalog.get(entry["skill"])
+            manifest = load_manifest(skill) if skill else None
+            target = make_target(entry["platform"], entry["scope"], project if entry["scope"] == "local" else None, entry["skill"])
+            if Path(entry["skillDir"]).resolve() != target.skill_dir.resolve():
+                print(
+                    f"skipping {entry['skill']} → {entry['platform']} ({entry['scope']}): "
+                    f"recorded at {entry['skillDir']}"
+                )
+                continue
+            selected.append((entry["skill"], target, manifest))
+    else:
+        resolve_requested(skills, args.skills, state)
+        for name in args.skills:
+            skill = catalog.get(name)
+            platforms = list(PLATFORM_ORDER)
+            if skill is not None:
+                platforms = platforms_for_skill(skill, platform_filter, strict=True)
+            elif platform_filter is not None:
+                platforms = platform_filter
+            manifest = load_manifest(skill) if skill else None
+            matched = False
+            for scope in scopes:
+                for platform in platforms:
+                    target = make_target(platform, scope, project, name)
+                    if find_entry(state["installs"], target.key(name)):
+                        selected.append((name, target, manifest))
+                        matched = True
+            if not matched:
+                where = ", ".join(platforms)
+                scope_text = " and ".join(scopes)
+                print(f"{name} is not installed for {where} ({scope_text})")
+
+    if args.all and not selected:
+        print("nothing installed for the selected scope")
+        return
+
+    skip_keys = {target.key(name) for name, target, _ in selected}
+    plans: list[tuple[str, Plan]] = []
+    for name, target, manifest in selected:
+        plan = plan_uninstall(name, target, manifest, state, skip_keys)
+        if plan is not None:
+            plans.append((name, plan))
+
+    if args.dry_run and plans:
+        print("dry-run: no files will be changed")
+    for name, plan in plans:
+        verb = "would uninstall" if args.dry_run else "uninstalled"
+        print_plan(f"{verb} {name} → {plan.target.platform} ({plan.target.scope})", plan)
+        apply_plan(plan, args.dry_run)
+        if not args.dry_run:
+            drop_install(state, name, plan.target)
+            save_state(state)
+
+
+def scan_skill_names(skills_dir: Path) -> list[str]:
+    if not skills_dir.is_dir():
+        return []
+    names = []
+    for child in sorted(skills_dir.iterdir(), key=lambda p: p.name):
+        if child.is_dir() and not child.is_symlink() and (child / "SKILL.md").is_file():
+            names.append(child.name)
+    return names
+
+
+def cmd_list(args: argparse.Namespace, skills: list[Skill]) -> None:
+    platform_filter = selected_platforms(args.platform)
+    name_filter = set(args.skills)
+    platforms = platform_filter or list(PLATFORM_ORDER)
+    for platform in platforms:
+        print(platform)
+        names = sorted(
+            skill.name
+            for skill in skills
+            if platform in skill.platforms and (not name_filter or skill.name in name_filter)
+        )
+        if not names:
+            print("  (none)")
+        else:
+            for name in names:
+                print(f"  {name}")
+        print()
+
+
+def cmd_installed(args: argparse.Namespace, skills: list[Skill], state: dict) -> None:
+    scopes = selected_scopes(args, ("global", "local"))
+    platform_filter = selected_platforms(args.platform)
+    project = project_dir(args) if "local" in scopes else None
+    if args.directory is not None and "local" not in scopes:
+        die("--directory is used with --local")
+    name_filter = set(args.skills)
+    repo_names = {skill.name for skill in skills}
+    platforms = platform_filter or list(PLATFORM_ORDER)
+    if "local" in scopes and project is not None:
+        print(f"Project: {display(project)}")
+        print()
+
+    for platform in platforms:
+        print(platform)
+        for scope in scopes:
+            scope_project = project if scope == "local" else None
+            skills_dir, _ = platform_paths(platform, scope, scope_project)
+            print(f"  {scope}  {display(skills_dir)}")
+            on_disk = scan_skill_names(skills_dir)
+            recorded = []
+            for entry in state["installs"]:
+                if entry["platform"] != platform or entry["scope"] != scope:
+                    continue
+                if scope == "local" and entry.get("project") != str(project):
+                    continue
+                if Path(entry["skillDir"]).resolve().parent != skills_dir.resolve():
+                    continue
+                recorded.append(entry)
+            names = sorted(set(on_disk) | {entry["skill"] for entry in recorded})
+            if name_filter:
+                names = [name for name in names if name in name_filter]
+            if not names:
+                print("    (none)")
+                continue
+            recorded_by_name = {entry["skill"]: entry for entry in recorded}
+            for name in names:
+                entry = recorded_by_name.get(name)
+                notes = []
+                if entry is not None:
+                    if name not in on_disk:
+                        notes.append("not on disk")
+                    extra = entry.get("externalFiles") or []
+                    if extra:
+                        parents = Counter(str(Path(item).parent) for item in extra)
+                        bits = []
+                        for parent, count in sorted(parents.items()):
+                            label = "file" if count == 1 else "files"
+                            bits.append(f"{count} {label} in {display(Path(parent))}")
+                        notes.append("+ " + ", ".join(bits))
+                mark = "◉" if name in repo_names or entry is not None else "◎"
+                suffix = f"  ({', '.join(notes)})" if notes else ""
+                print(f"    {mark} {name}{suffix}")
+        print()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="skills", add_help=False)
+    parser.add_argument("-h", "--help", action="store_true")
+    sub = parser.add_subparsers(dest="command")
+    for name in ("install", "uninstall", "list", "installed"):
+        command = sub.add_parser(name, add_help=False)
+        command.add_argument("skills", nargs="*")
+        command.add_argument("-g", "--global", dest="scope_global", action="store_true")
+        command.add_argument("-l", "--local", action="store_true")
+        command.add_argument("-C", "--directory", type=Path)
+        command.add_argument("-p", "--platform", action="append", default=[])
+        command.add_argument("-a", "--all", action="store_true")
+        command.add_argument("-n", "--dry-run", action="store_true")
+        command.add_argument("-h", "--help", action="store_true")
+    sub.add_parser("help", add_help=False)
+    return parser
+
+
+USAGE = """\
+usage: ./bin/skills <install|uninstall|list|installed> [skill...] [options]
+Run ./bin/skills --help for the commands and options.
+"""
+
+
+def main(argv: list[str]) -> int:
+    parser = build_parser()
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return int(exc.code or 0)
+    if getattr(args, "help", False) or args.command == "help":
+        print(HELP, end="")
+        return 0
+    if args.command is None:
+        print(USAGE, end="")
+        return 1
+    try:
+        require_skill_args(args, args.command)
+        skills = discover_skills()
+        state = load_state()
+        if args.command == "install":
+            cmd_install(args, skills, state)
+        elif args.command == "uninstall":
+            cmd_uninstall(args, skills, state)
+        elif args.command == "list":
+            if args.skills:
+                resolve_repo_names(skills, args.skills)
+            cmd_list(args, skills)
+        elif args.command == "installed":
+            if args.skills:
+                resolve_requested(skills, args.skills, state)
+            cmd_installed(args, skills, state)
+        else:
+            die(f"unknown command {args.command}")
+    except SkillError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

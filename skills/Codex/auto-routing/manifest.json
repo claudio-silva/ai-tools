@@ -1,0 +1,16 @@
+{
+  "install": [
+    "SKILL.md",
+    "agents",
+    "token-economy-validation.md",
+    {
+      "from": "te-agents/*.toml",
+      "to": "$CODEX_HOME/agents/"
+    }
+  ],
+  "remove": [
+    "$SKILLS_DIR/token-economy",
+    "$CODEX_HOME/agents/te_debug.toml",
+    "$CODEX_HOME/agents/te_advise_deep.toml"
+  ]
+}

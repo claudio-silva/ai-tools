@@ -91,18 +91,15 @@ node cdp.mjs nav "https://example.com/app" --name suite
 
 Since Chrome 136, `--remote-debugging-port` is ignored on the **default** user-data directory (a security fix against cookie-theft malware). This skill therefore always launches a separate instance with its own profile — you can never attach to the user's everyday browser, and its cookies/sessions are not present. That trade-off is a feature: the automated browser is disposable and can't leak the user's real sessions.
 
-## Installation
+## Install
 
-`cdp.mjs` is standalone — copy it next to `SKILL.md` and place the directory where your agent discovers skills:
+From the repository root:
 
-| Agent | Install location |
-| --- | --- |
-| **Codex** | `~/.codex/skills/lite-chrome-automation/` |
-| **Cursor** | `~/.cursor/skills/lite-chrome-automation/` |
-| **Claude Code** | `~/.claude/skills/lite-chrome-automation/` |
-| **Devin** | `~/.config/devin/skills/lite-chrome-automation/` |
+```sh
+./bin/skills install lite-chrome-automation
+```
 
-Or keep it anywhere and point agents at `SKILL.md` — the script has no configuration.
+`Shared` installs this skill for Cursor, Codex, Claude Code, and Devin. `manifest.json` copies `SKILL.md` and `cdp.mjs`. See the [skills README](../../README.md).
 
 ## Limitations
 

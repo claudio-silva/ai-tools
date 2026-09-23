@@ -19,7 +19,13 @@ A verified guide to developing Cursor plugins — commands, skills, subagents an
 
 ## Install
 
-Copy this folder to `~/.cursor/skills/cursor-plugin-development/`.
+From the repository root:
+
+```sh
+./bin/skills install cursor-plugin-development
+```
+
+`Cursor` installs this skill for Cursor only. `manifest.json` copies `SKILL.md` and `references/`. See the [skills README](../../README.md).
 
 ## Contents
 

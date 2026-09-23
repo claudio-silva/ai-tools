@@ -1,0 +1,13 @@
+{
+  "install": [
+    "SKILL.md",
+    "scripts/remote.py",
+    "scripts/worker.py",
+    "references",
+    {
+      "from": "agents/codex_remote_relay.toml",
+      "to": "$CODEX_HOME/agents/"
+    }
+  ],
+  "remove": []
+}

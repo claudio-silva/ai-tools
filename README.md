@@ -10,7 +10,13 @@ Custom-built skills, MCP servers, plugins and developer tools for AI environment
 
 ## Skills
 
-Each skill is a self-contained folder (`SKILL.md` + bundled references, scripts and agent definitions). Install = copy the folder into the target environment's skills directory — no symlinks, so updating an install is always a plain `cp -R` from this repo.
+Each skill is a directory under `skills/<Platform>/<name>/` with a `SKILL.md` and a `manifest.json`. The platform folder decides where it can be installed. Install and uninstall with [`bin/skills`](skills/README.md) — it copies the files the manifest names (no symlinks) and can delete retired paths:
+
+```sh
+./bin/skills list
+./bin/skills install --all
+./bin/skills installed
+```
 
 ### Cross-environment — `skills/Shared/`
 
@@ -42,11 +48,14 @@ Work in any MCP/agent environment; may carry env-specific metadata (e.g. `agents
 ## Layout
 
 ```
-mcp/<name>/             # standalone MCP servers — each is its own project
+bin/skills                  # install, uninstall, and list skills
+mcp/<name>/                 # standalone MCP servers — each is its own project
 skills/
-  Shared/<skill>/       # cross-environment; may carry env-specific metadata
-  Codex/<skill>/        # → ~/.codex/skills/  (also read by Cursor as a compat dir)
-  Cursor/<skill>/       # → ~/.cursor/skills/
+  Shared/<skill>/           # cursor, codex, claude-code, and devin
+  Codex/<skill>/            # codex
+  Cursor/<skill>/           # cursor
+  Claude/<skill>/           # claude-code (none yet)
+  Devin/<skill>/            # devin (none yet)
 ```
 
-`~/.agents/skills/` is the env-neutral global location both Codex-era and Cursor read; `~/.claude/skills/` is also picked up as a compat dir.
+Install paths, scope flags, and the manifest format are documented in [skills/README.md](skills/README.md).

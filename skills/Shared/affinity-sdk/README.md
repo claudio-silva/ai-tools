@@ -18,7 +18,13 @@ An agent skill that overrides the official **Affinity by Canva MCP** instruction
 
 ## Install
 
-Copy this folder into any MCP-capable environment's skills directory — `~/.cursor/skills/`, `~/.codex/skills/`, `~/.config/devin/skills/`, or `~/.agents/skills/`.
+From the repository root:
+
+```sh
+./bin/skills install affinity-sdk
+```
+
+`Shared` installs this skill for Cursor, Codex, Claude Code, and Devin. `manifest.json` copies `SKILL.md`. See the [skills README](../../README.md).
 
 ## Contents
 

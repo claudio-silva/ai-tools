@@ -1,0 +1,4 @@
+{
+  "install": ["SKILL.md", "scripts", "agents"],
+  "remove": []
+}

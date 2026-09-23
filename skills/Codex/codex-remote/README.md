@@ -25,12 +25,13 @@ Three components with deliberately separated concerns:
 
 ## Install
 
+From the repository root:
+
 ```sh
-cp agents/codex_remote_relay.toml ~/.codex/agents/
-cp -R . ~/.codex/skills/codex-remote/
+./bin/skills install codex-remote
 ```
 
-Restart Codex so it discovers the relay role.
+`Codex` installs this skill for Codex only. The manifest copies `SKILL.md`, `scripts/remote.py`, `scripts/worker.py`, and `references/` into the Codex skills directory, and copies `agents/codex_remote_relay.toml` into `$CODEX_HOME/agents`. Restart Codex so it discovers the relay role. See the [skills README](../../README.md).
 
 ## Contents
 

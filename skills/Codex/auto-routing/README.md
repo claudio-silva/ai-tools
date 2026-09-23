@@ -40,13 +40,13 @@ Nine pinned roles ship in `te-agents/` — the model and effort live in the role
 
 ## Install
 
+From the repository root:
+
 ```sh
-bin/install      # installs the skill to ~/.codex/skills/auto-routing and
-                 # the roles to ~/.codex/agents/ (requires `trash` on PATH)
-bin/uninstall    # removes both
+./bin/skills install auto-routing
 ```
 
-Restart Codex afterwards — agent definitions are discovered at startup.
+`Codex` installs this skill for Codex only. The manifest copies `SKILL.md`, `agents/`, and `token-economy-validation.md` into the Codex skills directory, copies `te-agents/*.toml` into `$CODEX_HOME/agents`, and removes the retired `token-economy` skill plus the dropped `te_debug` and `te_advise_deep` roles. `bin/install` and `bin/uninstall` call the same tool. Restart Codex afterwards — agent definitions are discovered at startup. See the [skills README](../../README.md).
 
 ## Contents
 
@@ -56,5 +56,5 @@ Restart Codex afterwards — agent definitions are discovered at startup.
 | `te-agents/*.toml` | Nine worker role definitions with pinned model/effort |
 | `token-economy-validation.md` | Evidence record: the measurements behind the rules, revision history |
 | `token-economy-support/` | Python tooling used to generate and measure the validation trials |
-| `bin/install`, `bin/uninstall` | Installer / remover for the skill and its roles |
+| `bin/install`, `bin/uninstall` | Wrappers around the repository `bin/skills` tool |
 | `agents/openai.yaml` | Codex plugin display metadata |

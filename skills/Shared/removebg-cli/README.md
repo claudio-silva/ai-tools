@@ -17,16 +17,13 @@ An agent skill for removing image backgrounds with the official [remove.bg](http
 
 ## Install
 
-Copy this folder into your environment's skills directory:
+From the repository root:
 
-| Environment | Skills directory |
-| --- | --- |
-| Codex | `~/.codex/skills/` |
-| Cursor | `~/.cursor/skills/` (also reads `~/.codex/skills/`, `~/.agents/skills/`, `~/.claude/skills/`) |
-| Devin | `~/.config/devin/skills/` |
-| Any | `~/.agents/skills/` |
+```sh
+./bin/skills install removebg-cli
+```
 
-`agents/openai.yaml` is Codex plugin display metadata — harmless in other environments.
+`Shared` installs this skill for Cursor, Codex, Claude Code, and Devin. `manifest.json` copies `SKILL.md`, `agents/`, and `references/`. `agents/openai.yaml` is Codex display metadata and is harmless in the other environments. See the [skills README](../../README.md) for scopes, platform filters, and uninstall.
 
 ## Contents
 

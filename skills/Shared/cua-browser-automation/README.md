@@ -73,14 +73,13 @@ browse close $A $B
 
 ## Install
 
-Copy this folder into the skills directory of any environment where `cua-driver` is installed:
+From the repository root, into any environment where `cua-driver` is installed:
 
-| Agent | Install location |
-| --- | --- |
-| **Codex** | `~/.codex/skills/cua-browser-automation/` |
-| **Cursor** | `~/.cursor/skills/cua-browser-automation/` |
-| **Claude Code** | `~/.claude/skills/cua-browser-automation/` |
-| **Devin** | `~/.config/devin/skills/cua-browser-automation/` |
+```sh
+./bin/skills install cua-browser-automation
+```
+
+`Shared` installs this skill for Cursor, Codex, Claude Code, and Devin. `manifest.json` copies `SKILL.md` and `browse`. See the [skills README](../../README.md).
 
 ## Contents
 
