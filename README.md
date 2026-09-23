@@ -2,6 +2,19 @@
 
 Custom-built skills, MCP servers, plugins and developer tools for AI environments like Codex, Cursor, Devin, etc.
 
+## Install
+
+Clone the repository and symlink `bin/skills` onto your `PATH`. The link is followed to the real script, and that script's repository is the one the tool manages.
+
+```sh
+git clone https://github.com/claudio-silva/ai-tools.git
+ln -s "$(pwd)/ai-tools/bin/skills" /usr/local/bin/skills
+```
+
+`/usr/local/bin` is the usual directory. `/usr/bin` is not a place to install this on macOS. To avoid writing outside your home directory, link it into a directory already on `PATH`, such as `~/.local/bin`.
+
+`skills pull` runs `git pull` in the clone and prints the current commit. That commit is the version of this repository. A zip download has no commit to compare or update; clone it instead.
+
 ## MCP servers
 
 | Project | Description |
@@ -10,12 +23,14 @@ Custom-built skills, MCP servers, plugins and developer tools for AI environment
 
 ## Skills
 
-Each skill is a directory under `skills/<Platform>/<name>/` with a `SKILL.md` and a `manifest.json`. The platform folder decides where it can be installed. Install and uninstall with [`bin/skills`](skills/README.md) — it copies the files the manifest names (no symlinks) and can delete retired paths:
+Each skill is a directory under `skills/<Platform>/<name>/` with a `SKILL.md` and a `manifest.json`. The platform folder decides where it can be installed. Manage them with [`bin/skills`](skills/README.md) — it copies the files the manifest names (no symlinks), updates a copy when the repository is newer, and can delete retired paths:
 
 ```sh
-./bin/skills list
-./bin/skills install --all
-./bin/skills installed
+skills list
+skills install --all
+skills installed
+skills update
+skills pull
 ```
 
 ### Cross-environment — `skills/Shared/`

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install, uninstall, and list skills from this repository."""
+"""Install, update, uninstall, and list skills from this repository."""
 
 from __future__ import annotations
 
@@ -9,12 +9,17 @@ import os
 import shutil
 import subprocess
 import sys
+import textwrap
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
+# resolve() follows symlinks, so a PATH link such as /usr/local/bin/skills
+# still uses the repository that contains the real script.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILLS_ROOT = REPO_ROOT / "skills"
+CLONE_URL = "https://github.com/claudio-silva/ai-tools.git"
 
 PLATFORM_ORDER = ("cursor", "codex", "claude-code", "devin")
 
@@ -33,32 +38,43 @@ VARIABLES = ("SKILLS_DIR", "SKILL_DIR", "PLATFORM_HOME", "CODEX_HOME", "HOME")
 HELP = """\
 Usage: ./bin/skills <command> [skill...] [options]
 
-Install skills from this repository onto Cursor, Codex, Claude Code, and Devin.
+Manage this repository's skills for Cursor, Codex, Claude Code, and Devin.
+List, install, update, or remove skills, or get information about the provided ones.
 
 The folder under skills/ selects the platforms a skill supports: Shared
 (all four), Cursor, Codex, Claude, or Devin.
 
 Commands:
   install [skill...]     Install skills. Defaults to --global.
+  update [skill...]      Reinstall installed skills whose repository copy is
+                         newer. No names, or --all, updates every outdated
+                         install. Defaults to --global. Uninstalls, then installs.
   uninstall [skill...]   Remove skills this tool installed. Defaults to --global.
   list [skill...]        List skills in this repository, grouped by platform.
   installed [skill...]   List skills installed on each platform.
                          Defaults to both global and local.
+  about <skill>          Show one repository skill's version and metadata.
+  pull                   Download the latest commit of this repository.
   help                   Show this help.
 
 Options:
-  -g, --global           User-level directories. Default for install and
-                         uninstall. Combine with --local to use both scopes.
+  -g, --global           User-level directories. Default for install, update,
+                         and uninstall. Combine with --local to use both scopes.
                          For installed, show the user-level directories.
   -l, --local            Project directories. Combine with --global to use
                          both scopes. For installed, show the project.
   -C, --directory DIR    Project directory for --local. Default: current directory.
   -p, --platform NAME    cursor, codex, claude-code, or devin. Repeat the flag,
                          or pass a comma-separated list.
-  -a, --all              install: every skill in the repo. uninstall: every
-                         recorded install for the selected scope and platforms.
-  -n, --dry-run          Show what install or uninstall would change.
+  -a, --all              install: every skill in the repo. update: every
+                         outdated install. uninstall: every recorded install
+                         for the selected scope and platforms.
+  -n, --dry-run          Show what install, update, or uninstall would change.
+  --version              With installed, append each skill's version.
   -h, --help             Show this help.
+
+A version is vYYMMDDHHmm from the skill files' modification time.
+installed shows ▲ in place of ◉ when the repository copy is newer.
 
 Install locations:
 
@@ -74,12 +90,14 @@ Details are in skills/README.md.
 
 Examples:
   ./bin/skills list
-  ./bin/skills installed
+  ./bin/skills about auto-routing
+  ./bin/skills installed --version
   ./bin/skills install --all
+  ./bin/skills update
+  ./bin/skills update --all
+  ./bin/skills pull
   ./bin/skills install removebg-cli --platform cursor
-  ./bin/skills install --local --directory ~/src/my-app affinity-sdk
   ./bin/skills uninstall auto-routing
-  ./bin/skills installed --global --platform codex
 """
 
 
@@ -563,18 +581,114 @@ def empty_dirs(skill_dir: Path, keep: set[str]) -> list[Path]:
     return doomed
 
 
+def format_version(mtime: float) -> str:
+    return datetime.fromtimestamp(mtime).strftime("v%y%m%d%H%M")
+
+
+def directory_mtime(skill_dir: Path) -> float | None:
+    if not skill_dir.is_dir() or skill_dir.is_symlink():
+        return None
+    times: list[float] = []
+    for dirpath, dirnames, filenames in os.walk(skill_dir):
+        dirnames[:] = [name for name in dirnames if name not in SKIP_DIR_NAMES and not name.startswith(".")]
+        for name in filenames:
+            if name == ".DS_Store" or name.startswith("."):
+                continue
+            times.append((Path(dirpath) / name).stat().st_mtime)
+    return max(times) if times else None
+
+
+def repo_mtime(skill: Skill) -> float:
+    manifest = load_manifest(skill)
+    times: list[float] = []
+    for entry in manifest["install"]:
+        if isinstance(entry, str):
+            source_ok(skill, entry, glob=False)
+            src = skill.path / entry
+            if not src.exists():
+                die(f"{skill.name}: missing {entry}")
+            times.extend(path.stat().st_mtime for path in files_under(skill, src))
+            continue
+        source = entry["from"]
+        is_glob = any("*" in part or "?" in part for part in Path(source).parts)
+        if is_glob:
+            source_ok(skill, source, glob=True)
+            matches = [
+                path
+                for path in skill.path.glob(source)
+                if path.is_file() and not ignored_file(path.relative_to(skill.path))
+            ]
+            if not matches:
+                die(f"{skill.name}: no files matched {source}")
+            times.extend(path.stat().st_mtime for path in matches)
+            continue
+        source_ok(skill, source, glob=False)
+        src = skill.path / source
+        if not src.exists():
+            die(f"{skill.name}: missing {source}")
+        times.extend(path.stat().st_mtime for path in files_under(skill, src))
+    if not times:
+        die(f"{skill.name}: manifest has no files to version")
+    return max(times)
+
+
+def installed_content_mtime(skill: Skill, target: Target) -> float | None:
+    pairs = expand_install(skill, load_manifest(skill), target)
+    times = [dest.stat().st_mtime for _src, dest in pairs if dest.is_file()]
+    return max(times) if times else None
+
+
+def repo_is_newer(skill: Skill, target: Target) -> bool:
+    if not (target.skill_dir / "SKILL.md").is_file():
+        return False
+    pairs = expand_install(skill, load_manifest(skill), target)
+    for src, dest in pairs:
+        if not dest.is_file() or src.stat().st_mtime > dest.stat().st_mtime:
+            return True
+    return False
+
+
+def parse_frontmatter(path: Path) -> dict[str, str]:
+    text = path.read_text(encoding="utf-8")
+    if not text.startswith("---\n"):
+        return {}
+    end = text.find("\n---", 3)
+    if end == -1:
+        return {}
+    meta: dict[str, str] = {}
+    current: str | None = None
+    for line in text[4:end].splitlines():
+        if current and (line.startswith(" ") or line.startswith("\t")):
+            extra = line.strip()
+            if extra:
+                meta[current] = f"{meta[current]} {extra}".strip()
+            continue
+        if ":" not in line:
+            current = None
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        meta[key] = value
+        current = key
+    return meta
+
+
 def plan_install(
     skill: Skill,
     target: Target,
     state: dict,
     skip_keys: set[tuple[str, str, str, str]],
+    replace: bool = False,
 ) -> Plan:
     manifest = load_manifest(skill)
     if target.skill_dir.is_symlink():
         die(f"{display(target.skill_dir)} is a symlink; this tool only manages real directories")
     key = target.key(skill.name)
     current = find_entry(state["installs"], key)
-    if target.skill_dir.exists() and current is None:
+    if target.skill_dir.exists() and current is None and not replace:
         die(
             f"{display(target.skill_dir)} already exists and was not installed by this tool. "
             "Move it aside, then install again."
@@ -608,7 +722,7 @@ def plan_install(
             actions.append(Action("remove", path))
     for src, dest in pairs:
         actions.append(Action("copy", dest, src=src))
-    if current is not None:
+    if current is not None and not replace:
         for path in stale_files(target.skill_dir, inside):
             if path not in dests:
                 actions.append(Action("remove", path))
@@ -797,13 +911,23 @@ def require_skill_args(args: argparse.Namespace, command: str) -> None:
         die("pass skill names or --all, not both")
     if command in ("install", "uninstall") and not args.all and not args.skills:
         die("name at least one skill, or pass --all")
-    if command in ("list", "installed"):
-        if args.all:
-            die(f"--all does not apply to {command}")
-        if args.dry_run:
-            die(f"--dry-run does not apply to {command}")
+    if command in ("list", "installed", "about", "pull") and args.all:
+        die(f"--all does not apply to {command}")
+    if command in ("list", "installed", "about", "pull") and args.dry_run:
+        die(f"--dry-run does not apply to {command}")
     if command == "list" and (args.scope_global or args.local or args.directory is not None):
         die("list shows skills in this repository; use installed for global and local installs")
+    if command == "about":
+        if len(args.skills) != 1:
+            die("about needs one skill name")
+        if args.scope_global or args.local or args.directory is not None or args.platform:
+            die("about shows a repository skill and does not take install options")
+    if command == "pull" and (
+        args.skills or args.scope_global or args.local or args.directory is not None or args.platform
+    ):
+        die("pull updates this repository and does not take skill or install options")
+    if getattr(args, "version", False) and command != "installed":
+        die("--version applies to installed")
 
 
 def skills_by_name(skills: list[Skill]) -> dict[str, Skill]:
@@ -944,6 +1068,137 @@ def cmd_uninstall(args: argparse.Namespace, skills: list[Skill], state: dict) ->
             save_state(state)
 
 
+def cmd_update(args: argparse.Namespace, skills: list[Skill], state: dict) -> None:
+    scopes = selected_scopes(args, ("global",))
+    platform_filter = selected_platforms(args.platform)
+    project = project_dir(args) if "local" in scopes else None
+    if args.directory is not None and "local" not in scopes:
+        die("--directory is used with --local")
+    catalog = skills_by_name(skills)
+    if args.skills:
+        resolve_repo_names(skills, args.skills)
+        chosen = [catalog[name] for name in args.skills]
+    else:
+        chosen = list(skills)
+
+    outdated: list[tuple[Skill, Target]] = []
+    current: list[tuple[Skill, Target]] = []
+    installed_names: set[str] = set()
+    for skill in chosen:
+        strict = bool(args.skills)
+        platforms = platforms_for_skill(skill, platform_filter, strict=strict)
+        if not platforms:
+            continue
+        for scope in scopes:
+            for platform in platforms:
+                target = make_target(platform, scope, project, skill.name)
+                if not (target.skill_dir / "SKILL.md").is_file():
+                    continue
+                installed_names.add(skill.name)
+                if repo_is_newer(skill, target):
+                    outdated.append((skill, target))
+                elif args.skills:
+                    current.append((skill, target))
+
+    if args.skills:
+        for name in args.skills:
+            if name not in installed_names:
+                print(f"{name} is not installed")
+        for skill, target in current:
+            print(f"{skill.name} is up to date for {target.platform} ({target.scope})")
+    if not outdated:
+        if not args.skills:
+            print("nothing to update")
+        return
+
+    if args.dry_run:
+        print("dry-run: no files will be changed")
+    for skill, target in outdated:
+        manifest = load_manifest(skill)
+        key = target.key(skill.name)
+        verb = "would update" if args.dry_run else "updated"
+        print(f"{verb} {skill.name} → {target.platform} ({target.scope})")
+        entry = find_entry(state["installs"], key)
+        if entry is not None:
+            removal = plan_uninstall(skill.name, target, manifest, state, {key})
+            if removal is not None:
+                for action in removal.actions:
+                    if action.kind == "remove":
+                        print(f"  remove {display(action.path)}")
+                    elif action.kind == "keep":
+                        print(f"  keep {display(action.path)} ({action.note})")
+                if not args.dry_run:
+                    apply_plan(removal, False)
+                    drop_install(state, skill.name, target)
+                    save_state(state)
+        elif present(target.skill_dir):
+            print(f"  remove {display(target.skill_dir)}")
+            if not args.dry_run:
+                trash_path(target.skill_dir)
+        fresh = plan_install(skill, target, state, {key}, replace=True)
+        print_plan(f"{'would install' if args.dry_run else 'installed'} {skill.name} → {target.platform} ({target.scope})", fresh)
+        if not args.dry_run:
+            apply_plan(fresh, False)
+            record_install(state, fresh)
+            save_state(state)
+
+
+def cmd_about(args: argparse.Namespace, skills: list[Skill]) -> None:
+    skill = skills_by_name(skills)[args.skills[0]]
+    meta = parse_frontmatter(skill.path / "SKILL.md")
+    version = format_version(repo_mtime(skill))
+    title = meta.get("name") or skill.name
+    print(title)
+    print()
+    label = 16
+    print(f"{'version':<{label}}{version}")
+    print(f"{'platforms':<{label}}{', '.join(skill.platforms)}")
+    print(f"{'path':<{label}}{skill.path.relative_to(REPO_ROOT).as_posix()}")
+    for key, value in meta.items():
+        if key in ("name", "description") or not value:
+            continue
+        print(f"{key:<{label}}{value}")
+    description = meta.get("description", "").strip()
+    if description:
+        print()
+        print(textwrap.fill(description, width=76))
+
+
+def git_commit() -> str:
+    git = shutil.which("git")
+    if git is None or not (REPO_ROOT / ".git").exists():
+        return ""
+    result = subprocess.run(
+        [git, "-C", str(REPO_ROOT), "rev-parse", "--short", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def cmd_pull() -> int:
+    if not (REPO_ROOT / ".git").exists():
+        die(
+            f"{display(REPO_ROOT)} is not a git clone, so there is no history to update. "
+            f"Clone {CLONE_URL} and symlink bin/skills onto your PATH."
+        )
+    git = shutil.which("git")
+    if git is None:
+        die("git is required to update this repository")
+    before = git_commit()
+    print(f"repository  {display(REPO_ROOT)}")
+    if before:
+        print(f"commit      {before}")
+    result = subprocess.run([git, "-C", str(REPO_ROOT), "pull"], check=False)
+    after = git_commit()
+    if result.returncode == 0 and after and after != before:
+        print(f"commit      {after}")
+    return result.returncode
+
+
 def scan_skill_names(skills_dir: Path) -> list[str]:
     if not skills_dir.is_dir():
         return []
@@ -1009,8 +1264,13 @@ def cmd_installed(args: argparse.Namespace, skills: list[Skill], state: dict) ->
                 print("    (none)")
                 continue
             recorded_by_name = {entry["skill"]: entry for entry in recorded}
+            catalog = {skill.name: skill for skill in skills}
+            show_version = getattr(args, "version", False)
             for name in names:
                 entry = recorded_by_name.get(name)
+                repo_skill = catalog.get(name)
+                target = make_target(platform, scope, scope_project, name)
+                newer = repo_skill is not None and repo_is_newer(repo_skill, target)
                 notes = []
                 if entry is not None:
                     if name not in on_disk:
@@ -1023,9 +1283,24 @@ def cmd_installed(args: argparse.Namespace, skills: list[Skill], state: dict) ->
                             label = "file" if count == 1 else "files"
                             bits.append(f"{count} {label} in {display(Path(parent))}")
                         notes.append("+ " + ", ".join(bits))
-                mark = "◉" if name in repo_names or entry is not None else "◎"
+                if newer:
+                    mark = "▲"
+                elif name in repo_names or entry is not None:
+                    mark = "◉"
+                else:
+                    mark = "◎"
+                version = ""
+                if show_version:
+                    if repo_skill is not None and name in on_disk:
+                        mtime = installed_content_mtime(repo_skill, target)
+                    elif name in on_disk:
+                        mtime = directory_mtime(target.skill_dir)
+                    else:
+                        mtime = None
+                    if mtime is not None:
+                        version = f" - {format_version(mtime)}"
                 suffix = f"  ({', '.join(notes)})" if notes else ""
-                print(f"    {mark} {name}{suffix}")
+                print(f"    {mark} {name}{version}{suffix}")
         print()
 
 
@@ -1033,7 +1308,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="skills", add_help=False)
     parser.add_argument("-h", "--help", action="store_true")
     sub = parser.add_subparsers(dest="command")
-    for name in ("install", "uninstall", "list", "installed"):
+    for name in ("install", "uninstall", "list", "installed", "update", "about", "pull"):
         command = sub.add_parser(name, add_help=False)
         command.add_argument("skills", nargs="*")
         command.add_argument("-g", "--global", dest="scope_global", action="store_true")
@@ -1043,12 +1318,14 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("-a", "--all", action="store_true")
         command.add_argument("-n", "--dry-run", action="store_true")
         command.add_argument("-h", "--help", action="store_true")
+        if name == "installed":
+            command.add_argument("--version", action="store_true")
     sub.add_parser("help", add_help=False)
     return parser
 
 
 USAGE = """\
-usage: ./bin/skills <install|uninstall|list|installed> [skill...] [options]
+usage: ./bin/skills <install|update|uninstall|list|installed|about|pull> [skill...] [options]
 Run ./bin/skills --help for the commands and options.
 """
 
@@ -1067,12 +1344,19 @@ def main(argv: list[str]) -> int:
         return 1
     try:
         require_skill_args(args, args.command)
+        if args.command == "pull":
+            return cmd_pull()
         skills = discover_skills()
         state = load_state()
         if args.command == "install":
             cmd_install(args, skills, state)
+        elif args.command == "update":
+            cmd_update(args, skills, state)
         elif args.command == "uninstall":
             cmd_uninstall(args, skills, state)
+        elif args.command == "about":
+            resolve_repo_names(skills, args.skills)
+            cmd_about(args, skills)
         elif args.command == "list":
             if args.skills:
                 resolve_repo_names(skills, args.skills)

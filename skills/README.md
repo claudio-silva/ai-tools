@@ -1,12 +1,14 @@
 # Skills
 
-`bin/skills` installs, uninstalls, and lists the skills in this repository. Run it from the repository root:
+`bin/skills` lists, installs, updates, and uninstalls the skills in this repository. Clone the repo and symlink the script onto your `PATH`; the link is followed back to this repository:
 
 ```sh
-./bin/skills list
-./bin/skills install --all
-./bin/skills installed
+git clone https://github.com/claudio-silva/ai-tools.git
+ln -s "$(pwd)/ai-tools/bin/skills" /usr/local/bin/skills
+skills list
 ```
+
+`skills pull` runs `git pull` in that clone and prints the commit, which is the repository version. A zip download has no commit to update.
 
 A skill is a directory under `skills/<Platform>/<name>/` with a `SKILL.md` and a `manifest.json`. The folder name selects the platforms that skill can be installed to:
 
@@ -27,23 +29,27 @@ The installer copies the files named in the manifest. It does not symlink, and i
 | Command | What it does |
 | --- | --- |
 | `install [skill...]` | Copy the selected skills into the platform directories |
+| `update [skill...]` | Reinstall installed skills whose repository copy is newer. No names, or `--all`, selects every outdated install |
 | `uninstall [skill...]` | Remove skills this tool previously installed |
 | `list [skill...]` | List skills in this repository, grouped by platform |
 | `installed [skill...]` | List skills installed on each platform, then by scope |
+| `about <skill>` | Show one repository skill's version and metadata |
+| `pull` | Run `git pull` in this repository and print its commit |
 | `help` | Show the command and option summary |
 
-`install` and `uninstall` default to `--global`. `installed` defaults to both scopes. `list` shows the repository only; pass skill names to either list command to show only those skills.
+`install`, `update`, and `uninstall` default to `--global`. `installed` defaults to both scopes. `list` and `about` show the repository only. `update` and `update --all` select every installed skill whose repository copy is newer. `install` and `uninstall` still need a skill name or `--all`.
 
 ## Options
 
 | Option | Meaning |
 | --- | --- |
-| `-g`, `--global` | User-level directories. Default for `install` and `uninstall` when neither scope flag is set. Combine with `--local` to act on both. |
+| `-g`, `--global` | User-level directories. Default for `install`, `update`, and `uninstall` when neither scope flag is set. Combine with `--local` to act on both. |
 | `-l`, `--local` | Project directories. Combine with `--global` to act on both. |
 | `-C`, `--directory DIR` | Project used for `--local`. Defaults to the current directory. Valid only when the local scope is included. |
 | `-p`, `--platform NAME` | Limit to one platform. Repeat the flag, or pass a comma-separated list: `cursor`, `codex`, `claude-code`, `devin`. |
-| `-a`, `--all` | `install`: every skill in the repo. `uninstall`: every skill this tool has recorded for the selected scope and platforms. |
+| `-a`, `--all` | `install`: every skill in the repo. `update`: every installed skill whose repository copy is newer. `uninstall`: every skill this tool has recorded for the selected scope and platforms. |
 | `-n`, `--dry-run` | Print the copy and delete actions without changing anything. |
+| `--version` | With `installed`, append each skill's version. |
 | `-h`, `--help` | Show the command and option summary. |
 
 A named skill is never installed to a platform its folder does not support. With `--all`, platforms a skill does not support are skipped, and each matching skill is installed only to the platforms you named.
@@ -58,8 +64,12 @@ A named skill is never installed to a platform its folder does not support. With
 ./bin/skills uninstall --all --local
 ./bin/skills list
 ./bin/skills list --platform codex
-./bin/skills installed
-./bin/skills installed --global --platform codex
+./bin/skills about auto-routing
+./bin/skills installed --version
+./bin/skills update
+./bin/skills update --all
+./bin/skills pull
+./bin/skills update auto-routing
 ./bin/skills install auto-routing --dry-run
 ```
 
@@ -100,13 +110,13 @@ codex
   removebg-cli
 ```
 
-`installed` reads the platform directories, not only the record. A folder that contains `SKILL.md` is listed. ◉ marks a skill from this repository. ◎ marks a skill that is not in this repository. Files this tool installed outside the skill directory are counted on that line. A recorded skill whose directory is missing is still listed, so `uninstall` can remove the files that were installed beside it.
+`installed` reads the platform directories, not only the record. A folder that contains `SKILL.md` is listed. ◉ marks a skill from this repository. ◎ marks a skill that is not in this repository. ▲ replaces ◉ when a file in the repository is newer than the installed copy. An installed copy that is newer than the repository keeps ◉. Files this tool installed outside the skill directory are counted on that line. A recorded skill whose directory is missing is still listed, so `uninstall` can remove the files that were installed beside it.
 
 ```text
 cursor
   global  ~/.cursor/skills
     ◉ affinity-sdk
-    ◉ cursor-plugin-development
+    ▲ cursor-plugin-development
     ◎ some-other-skill
   local   ~/src/my-app/.cursor/skills
     (none)
@@ -117,6 +127,17 @@ codex
   local   ~/src/my-app/.agents/skills
     (none)
 ```
+
+## Versions
+
+A skill's version is `v` plus the local modification time of its newest manifest file, to the minute: `vYYMMDDHHmm`, for example `v2608151725`. There is no counter to bump. `about` prints the repository skill's version. `installed --version` prints the installed copy's version:
+
+```text
+◉ auto-routing - v2608151725
+▲ cursor-plugin-development - v2601010900
+```
+
+`update` reinstalls every selected skill whose repository copy is newer. It uninstalls that copy, then installs it, so files the current manifest does not list are removed. With no skill names, or with `--all`, it checks every installed skill from this repository.
 
 ## manifest.json
 
