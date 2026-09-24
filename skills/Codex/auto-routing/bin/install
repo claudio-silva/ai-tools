@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-# Install auto-routing through the repository skill tool.
-set -euo pipefail
-REPO="$(cd "$(dirname "$0")/../../../.." && pwd)"
-exec "$REPO/bin/aitools" install auto-routing "$@"

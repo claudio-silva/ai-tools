@@ -1,0 +1,39 @@
+{
+  "name": "aitools",
+  "version": "0.1.0",
+  "description": "The tool manager for AI coding agents — install skills and MCP servers for Cursor, Codex, Claude Code, and Devin from any repository",
+  "keywords": [
+    "ai",
+    "agents",
+    "mcp",
+    "skills",
+    "cursor",
+    "codex",
+    "claude-code",
+    "devin",
+    "tools"
+  ],
+  "homepage": "https://github.com/claudio-silva/ai-tools",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/claudio-silva/ai-tools.git",
+    "directory": "npx"
+  },
+  "license": "MIT",
+  "bin": {
+    "aitools": "bin/aitools.js"
+  },
+  "files": [
+    "bin/"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ],
+  "engines": {
+    "node": ">=14"
+  }
+}

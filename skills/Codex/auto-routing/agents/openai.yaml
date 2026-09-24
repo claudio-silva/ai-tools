@@ -1,6 +1,0 @@
-interface:
-  display_name: "Auto Routing"
-  short_description: "Keep judgment central; delegate work economically"
-  default_prompt: "Use $auto-routing for this chat: keep judgment with the main agent and route substantial bounded work to the pinned worker roles."
-policy:
-  allow_implicit_invocation: false

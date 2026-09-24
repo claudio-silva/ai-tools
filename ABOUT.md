@@ -1,46 +1,17 @@
-# About
+# Repository format
 
-This repository's tools are skills, MCP servers, and, later, plugins. `bin/aitools` installs and manages them on macOS Apple Silicon. It copies skill files and shipped MCP binaries; it does not build.
+Any git repository — or local directory — that follows this layout is an `aitools` source. Users point the tool at it (`aitools use <repo>`, or a per-command first argument) and get `list`, `install`, `update`, and `uninstall` for everything it publishes. There is no central registry: your repository is the package index.
 
-## imagen
+A conforming repository has one or both of:
 
-[imagen](mcp/imagen/) is a lightweight MCP server for OpenAI **gpt-image-2.5** image generation and editing, over stdio. It is a Go program with one direct dependency and ships as a static `mcp/imagen/bin/imagen` binary. The full parameter tables are in [mcp/imagen/README.md](mcp/imagen/README.md).
-
-Tools:
-
-| Tool | What it does |
-| --- | --- |
-| `generate_image` | Create an image from a text prompt |
-| `edit_image` | Edit 1–16 existing images, with an optional mask |
-| `get_usage_guide` | Return the embedded prompting guide, also sent at `initialize` |
-
-`generate_image` and `edit_image` write the image to an absolute `outputPath`. Models are `gpt-image-2.5-flare` (default) and `gpt-image-2.5-sunburst`. Quality runs from `low` to `max`. `background` can be `transparent` for png or webp. `n` from 1 to 10 writes `name-1.ext` through `name-N.ext`.
-
-Install with `aitools install imagen`. That copies the shipped binary and writes the server into each platform MCP config. Tool calls need `OPENAI_API_KEY`; install fills `$OPENAI_API_KEY` from the environment, or prompts for it. An empty answer at the prompt leaves the placeholder. Pass `--raw` to skip the prompt and leave placeholders. Restart the MCP client after installing.
-
-To rebuild the binary during development:
-
-```sh
-cd mcp/imagen
-make build      # mcp/imagen/bin/imagen
+```text
+skills/<Platform>/<name>/   skills, grouped by platform folder
+mcp/<name>/                 MCP servers
 ```
 
 ## Skills
 
-`bin/aitools` lists, installs, updates, and uninstalls the skills in this repository. Clone the repo and run `aitools setup` to symlink the script to `~/bin/aitools` or `~/.local/bin/aitools`, whichever of those directories is on `PATH`; the link is followed back to this repository:
-
-```sh
-git clone https://github.com/claudio-silva/ai-tools.git
-cd ai-tools
-./bin/aitools setup
-aitools list
-```
-
-`aitools setup --remove` removes that link when it points at this clone.
-
-`aitools pull` runs `git pull` in that clone and prints the commit, which is the repository version. A zip download has no commit to update.
-
-A skill is a directory under `skills/<Platform>/<name>/` with a `SKILL.md` and a `manifest.json`. The folder name selects the platforms that skill can be installed to:
+A skill is a directory under `skills/<Platform>/<name>/` containing `SKILL.md` and `manifest.json`. The platform folder decides which agents the skill can be installed to:
 
 | Folder | Platforms |
 | --- | --- |
@@ -50,159 +21,9 @@ A skill is a directory under `skills/<Platform>/<name>/` with a `SKILL.md` and a
 | `Claude` | claude-code |
 | `Devin` | devin |
 
-`Shared` is the cross-platform folder. `Claude` and `Devin` are reserved for skills that belong to only that platform; none are in the repo yet.
+`SKILL.md` carries the usual frontmatter (`name`, `description`) plus the body the agent reads. If the skill ships helper scripts or binaries, include them in the manifest and document in `SKILL.md` how the agent should invoke them — aitools copies whatever the manifest lists, preserving permissions.
 
-The installer copies the files named in the manifest. It does not symlink, and it does not copy anything the manifest omits, so READMEs, notes, and repo-only tooling stay in the repository. Deletions go through the `trash` command on `PATH` (macOS `/usr/bin/trash`, or the [trash](https://github.com/ali-rantakari/trash) CLI).
-
-## Commands
-
-| Command | What it does |
-| --- | --- |
-| `install [tool...]` | Install the named tools. Skills are copied from their manifest. MCP servers are copied from the shipped binary and written into the platform MCP config |
-| `update [tool...]` | Reinstall installed tools whose repository copy is newer. No names, or `--all`, selects every outdated install |
-| `uninstall [tool...]` | Remove tools this command previously installed |
-| `list [tool...]` | List tools in this repository, grouped by platform. MCP servers are marked `(mcp)` |
-| `installed [tool...]` | List tools installed on each platform, then by scope |
-| `about` / `info` / `show <tool>` | Show one repository tool's version, metadata, and install status by scope (◉, ◎, ▲, or not installed) |
-| `pull` | Run `git pull` in this repository and print its commit |
-| `setup` | Symlink this script to `~/bin/aitools` or `~/.local/bin/aitools` when that directory is on `PATH` |
-| `help` | Show the command and option summary |
-
-`install`, `update`, and `uninstall` default to `--global`. `installed` defaults to both scopes. `list` and `about` / `info` / `show` show the repository only. `update` and `update --all` select every installed tool whose repository copy is newer. `install` and `uninstall` still need a tool name or `--all`. `install` and `update` take `--raw` when the tool is an MCP server.
-
-## Options
-
-| Option | Meaning |
-| --- | --- |
-| `-g`, `--global` | User-level directories. Default for `install`, `update`, and `uninstall` when neither scope flag is set. Combine with `--local` to act on both. |
-| `-l`, `--local` | Project directories. Combine with `--global` to act on both. |
-| `-C`, `--directory DIR` | Project used for `--local`. Defaults to the current directory. Valid only when the local scope is included. |
-| `-p`, `--platform NAME` | Limit to one platform. Repeat the flag, or pass a comma-separated list: `cursor`, `codex`, `claude-code`, `devin`. |
-| `-a`, `--all` | `install`: every matching tool in the repo. `update`: every outdated install. `uninstall`: every recorded install for the selected scope and platforms. |
-| `-n`, `--dry-run` | Print the copy and delete actions without changing anything. |
-| `--version` | With `installed`, append each tool's version. |
-| `--raw` | With `install` or `update` of an MCP server, write `$NAME` placeholders instead of filling them. |
-| `-h`, `--help` | Show the command and option summary. |
-
-A named skill is never installed to a platform its folder does not support. With `--all`, platforms a skill does not support are skipped, and each matching skill is installed only to the platforms you named.
-
-```sh
-./bin/aitools install removebg-cli --platform cursor
-./bin/aitools install --all --platform cursor
-./bin/aitools install auto-routing
-./bin/aitools install --local --directory ~/src/my-app affinity-sdk
-./bin/aitools install --global --local removebg-cli
-./bin/aitools uninstall auto-routing
-./bin/aitools uninstall --all --local
-./bin/aitools list
-./bin/aitools list --platform codex
-./bin/aitools about auto-routing
-./bin/aitools about imagen
-./bin/aitools install imagen
-./bin/aitools installed --version
-./bin/aitools update
-./bin/aitools update --all
-./bin/aitools pull
-./bin/aitools update auto-routing
-./bin/aitools install auto-routing --dry-run
-./bin/aitools install imagen --raw
-./bin/aitools uninstall imagen
-```
-
-## Where skills are installed
-
-| Platform | Global | Local (project) |
-| --- | --- | --- |
-| cursor | `~/.cursor/skills` | `.cursor/skills` |
-| codex | `$CODEX_HOME/skills` (`$CODEX_HOME` defaults to `~/.codex`) | `.agents/skills` |
-| claude-code | `~/.claude/skills` | `.claude/skills` |
-| devin | `~/.config/devin/skills` (Devin for Terminal) | `.devin/skills` |
-
-A Shared skill is copied once into each selected platform directory.
-
-Cursor discovers `.agents/skills` as a project skill directory on its own, so a local Codex install is also visible to Cursor. When **Include third-party Plugins, Skills, and other configs** is enabled, Cursor also discovers the other platforms' skill directories (`.codex/skills`, `.claude/skills`, and their `~/` equivalents). A Shared skill can therefore appear more than once in Cursor.
-
-Codex loads custom agent TOML files from `$CODEX_HOME/agents` (usually `~/.codex/agents`) and does not register a project `.codex/agents` directory. Manifests that install roles use `$CODEX_HOME/agents` for both global and local installs. Restart Codex after installing or removing those files.
-
-## Where MCP servers are installed
-
-Each MCP is `mcp/<name>/` with a `manifest.json` and a shipped binary at `mcp/<name>/bin/<name>`. `aitools install` copies that binary to `~/bin/<name>` when `~/bin` exists and is writable, otherwise to `~/.local/bin/<name>`. Install stops if neither directory is available. The `settings` object is written into:
-
-| Platform | Global | Local (project) |
-| --- | --- | --- |
-| cursor | `~/.cursor/mcp.json` | `.cursor/mcp.json` |
-| codex | `$CODEX_HOME/config.toml` | `.codex/config.toml` |
-| claude-code | `~/.claude.json` | `.mcp.json` |
-| devin | `~/.config/devin/mcp_config.json` | `.devin/mcp_config.json` |
-
-String values in `settings` may contain `$BINARY` and `$NAME`. `$BINARY` is always the installed executable. Other `$NAME` placeholders are filled from the environment, or by a prompt. An empty answer at the prompt leaves the placeholder. `--raw` skips the prompt and leaves placeholders in the file. Secrets are written only into the platform config.
-
-An existing server entry that this tool did not record is left in place, and install stops for that destination. Uninstall removes the server key and a binary this tool copied to `~/bin` or `~/.local/bin` when no other recorded install still uses it.
-
-## Install record
-
-Installs are recorded in `~/.local/state/ai-tools/installs.json`, or `$XDG_STATE_HOME/ai-tools/installs.json` when that variable is set. `uninstall` deletes recorded paths, plus any paths the current manifest lists under `remove`. A path that another recorded install still uses is kept.
-
-A destination skill directory that already exists and was not installed by this tool is left in place, and `install` stops with an error for that destination. Move it aside, then install again.
-
-Reinstalling a managed skill copies the current manifest again and deletes files inside that skill directory that the manifest no longer lists. Files the manifest installs outside the skill directory are replaced.
-
-`list` prints the skills in this repository, grouped by the platforms they can be installed to. A Shared skill appears under each platform. Directory paths are omitted.
-
-```text
-cursor
-  affinity-sdk
-  cursor-plugin-development
-  removebg-cli
-
-codex
-  affinity-sdk
-  auto-routing
-  removebg-cli
-```
-
-`installed` reads the platform directories, not only the record. A folder that contains `SKILL.md` is listed. ◉ marks a skill from this repository. ◎ marks a skill that is not in this repository. ▲ replaces ◉ when a file in the repository is newer than the installed copy. An installed copy that is newer than the repository keeps ◉. Files this tool installed outside the skill directory are counted on that line. A recorded skill whose directory is missing is still listed, so `uninstall` can remove the files that were installed beside it.
-
-Output is grouped by scope, then by tool kind, then by platform. Platforms with nothing installed are omitted, and a scope with nothing in it says so on one line.
-
-```text
-Global
-
-  Skills
-    cursor       ~/.cursor/skills
-      ◉ affinity-sdk
-      ▲ cursor-plugin-development
-      ◎ some-other-skill
-    codex        ~/.codex/skills
-      ◉ auto-routing  (+ 9 files in ~/.codex/agents)
-
-  MCP servers
-    devin        ~/.config/devin/mcp_config.json
-      ◉ imagen
-      ◎ nano-banana
-
-Project  ~/src/my-app
-  nothing installed
-```
-
-MCP servers are read from the platform MCP configs. The same marks apply: ◉ is an MCP from this repository, ◎ is not, ▲ when the shipped binary is newer than the installed copy or the recorded command path differs.
-
-## Versions
-
-A skill's version is `v` plus the local modification time of its newest manifest file, to the minute: `vYYMMDDHHmm`, for example `v2608151725`. There is no counter to bump. `about` prints the repository skill's version. `installed --version` prints the installed copy's version. When the repository is newer, it shows the installed version, then the repository version:
-
-```text
-◉ auto-routing - v2608151725
-▲ cursor-plugin-development - v2601010900 < v2608151725
-```
-
-An MCP server's version uses the same format, from the binary's modification time. `about` prints the shipped binary. `installed --version` prints the installed copy.
-
-`update` reinstalls every selected skill whose repository copy is newer. It uninstalls that copy, then installs it, so files the current manifest does not list are removed. With no skill names, or with `--all`, it checks every installed tool from this repository. For an MCP server it recopies the shipped binary and rewrites the config entry.
-
-## manifest.json
-
-Every skill has a manifest next to `SKILL.md`:
+### manifest.json
 
 ```json
 {
@@ -218,21 +39,21 @@ Every skill has a manifest next to `SKILL.md`:
 - `to` is the destination. A glob copies each matched file into the `to` directory under its base name. A trailing slash on `to` does the same for one file. A directory `from` copies that directory's contents into `to`.
 - The install must place `SKILL.md` in the destination skill directory.
 
-`remove` is optional. Those paths are deleted on install and on uninstall when they are present. Use it for retired skill directories and obsolete files a previous version installed. A path that another recorded install still uses is kept.
+`remove` is optional. Those paths are deleted on install and on uninstall when present — use it for retired skill directories and obsolete files a previous version installed. A path another recorded install still uses is kept.
 
-Variables in `to` and `remove` (longer names are expanded first):
+Variables in `to` and `remove` (longer names expand first):
 
 | Variable | Meaning |
 | --- | --- |
 | `$SKILL_DIR` | Destination skill directory |
 | `$SKILLS_DIR` | Platform skills directory for this install |
-| `$PLATFORM_HOME` | Config root for this platform and scope. Global cursor is `~/.cursor`, local cursor is `<project>/.cursor`. Global codex is `$CODEX_HOME`, local codex is `<project>/.codex`. Claude Code and Devin follow the same pattern (`~/.claude`, `~/.config/devin`, and the project equivalents). |
-| `$CODEX_HOME` | Codex user config directory, in both scopes. Agent TOML files belong here. |
+| `$PLATFORM_HOME` | Config root for this platform and scope (e.g. global cursor is `~/.cursor`, local codex is `<project>/.codex`) |
+| `$CODEX_HOME` | Codex user config directory, in both scopes |
 | `$HOME` | Home directory |
 
-`to` and `remove` must expand to an absolute path inside the selected platform directories, `$CODEX_HOME`, or the project directory. They cannot be the home directory, a platform config root, a skills directory, or `$CODEX_HOME/agents` itself.
+`to` and `remove` must expand to an absolute path inside the selected platform directories, `$CODEX_HOME`, or the project directory — never the home directory, a platform config root, a skills directory, or `$CODEX_HOME/agents` itself.
 
-`auto-routing` is the manifest that installs files outside the skill directory and deletes retired ones:
+Example — a skill that also installs Codex agent roles and retires old paths:
 
 ```json
 {
@@ -244,8 +65,108 @@ Variables in `to` and `remove` (longer names are expanded first):
   ],
   "remove": [
     "$SKILLS_DIR/token-economy",
-    "$CODEX_HOME/agents/te_debug.toml",
-    "$CODEX_HOME/agents/te_advise_deep.toml"
+    "$CODEX_HOME/agents/te_debug.toml"
   ]
 }
 ```
+
+## MCP servers
+
+An MCP server is `mcp/<name>/` with a `manifest.json`:
+
+```json
+{
+  "platforms": ["cursor", "codex", "claude-code", "devin"],
+  "settings": {
+    "command": "$BINARY",
+    "env": { "OPENAI_API_KEY": "$OPENAI_API_KEY" }
+  },
+  "files": ["server.py", "lib"],
+  "message": "Restart the client after installing."
+}
+```
+
+- `platforms` (required) — subset of `cursor`, `codex`, `claude-code`, `devin`.
+- `settings` (required) — the object written into each platform's MCP config under `mcpServers.<name>` (JSON) or `mcp_servers.<name>` (Codex TOML).
+- `files` (optional) — payload paths relative to `mcp/<name>/`, copied to `~/.local/share/ai-tools/mcp/<name>/`. Same entry forms as skill manifests: strings and `{"from", "to"}` objects, where `to` may use `$SERVER_DIR` and `$HOME`.
+- `message` (optional) — shown after install.
+- `bin/<name>` (optional) — a shipped binary, copied to `~/bin` or `~/.local/bin` on install.
+
+Three shapes, in order of how much they ship:
+
+1. **Binary server** — ship `bin/<name>`; use `$BINARY` in `settings.command`. The binary is copied to the user's bin directory.
+2. **Script server** — ship sources via `files`; use `$SERVER_DIR` in `settings` (e.g. `"command": "python3", "args": ["$SERVER_DIR/server.py"]`).
+3. **External server** — no `bin/`, no `files`; `settings` alone describes the launcher (`npx`, `uvx`, a remote `url`, …).
+
+Placeholders in `settings` string values: `$BINARY` is the installed binary path, `$SERVER_DIR` the managed payload directory. Any other `$NAME` is filled from the environment at install time — on a TTY the user is prompted for missing values (an empty answer leaves the placeholder), and `--raw` writes placeholders as-is.
+
+`platforms`, `settings`, and `message` are the only required/optional keys; unknown keys are rejected.
+
+## Where tools land
+
+Skills:
+
+| Platform | Global | Local (project) |
+| --- | --- | --- |
+| cursor | `~/.cursor/skills` | `.cursor/skills` |
+| codex | `$CODEX_HOME/skills` | `.agents/skills` |
+| claude-code | `~/.claude/skills` | `.claude/skills` |
+| devin | `~/.config/devin/skills` | `.devin/skills` |
+
+MCP configs:
+
+| Platform | Global | Local (project) |
+| --- | --- | --- |
+| cursor | `~/.cursor/mcp.json` | `.cursor/mcp.json` |
+| codex | `$CODEX_HOME/config.toml` | `.codex/config.toml` |
+| claude-code | `~/.claude.json` | `.mcp.json` |
+| devin | `~/.config/devin/mcp_config.json` | `.devin/mcp_config.json` |
+
+`$CODEX_HOME` defaults to `~/.codex`. Shipped binaries go to `~/bin` when it exists and is writable, else `~/.local/bin`. MCP payloads go to `~/.local/share/ai-tools/mcp/<name>/`.
+
+## Install semantics
+
+- `install` copies manifest files and records the install in `~/.local/state/ai-tools/installs.json` (including which source repository it came from).
+- A destination that already exists and wasn't installed by aitools is left alone — the install fails for that destination rather than overwriting foreign files.
+- Reinstalling replaces managed files and deletes files inside the skill directory that the manifest no longer lists.
+- `uninstall` deletes recorded paths and the manifest's `remove` paths, keeping paths still used by another recorded install. Deletions go to `~/.Trash` when possible, and are deleted permanently when it can't take them (e.g. a different volume).
+- An MCP entry in a platform config that aitools didn't record is left in place.
+- `update` reinstalls tools whose repository copy is newer — comparing the repository files' modification times against the installed copies.
+
+## Versions
+
+A tool's version is `v` plus the local modification time of its newest installed file, to the minute: `vYYMMDDHHmm`. There is no counter to bump — editing a file in the repository is the version bump. `about` prints the repository version; `installed --version` prints the installed copy, and `▲` marks tools where the repository is newer:
+
+```text
+◉ auto-routing - v2608151725
+▲ imagen - v2601010900 < v2609241803
+```
+
+## Commands and options
+
+```text
+aitools use [<repo>]
+aitools install [<repo>] (<tool>...|--all) [opts]
+aitools update [<repo>] [<tool>...|--all] [opts]
+aitools uninstall [<repo>] (<tool>...|--all) [opts]
+aitools list [<repo>] [<tool>...]
+aitools installed [<tool>...] [--version]
+aitools about|info|show [<repo>] <tool>
+aitools pull [<repo>]
+aitools cache | cache clear [<repo>]
+aitools setup [--remove]
+```
+
+| Option | Meaning |
+| --- | --- |
+| `-g`, `--global` | User-level directories (default for install/update/uninstall) |
+| `-l`, `--local` | Project directories |
+| `-C`, `--directory DIR` | Project directory for `--local` (default: cwd) |
+| `-p`, `--platform NAME` | `cursor`, `codex`, `claude-code`, `devin` — repeat or comma-separate |
+| `-a`, `--all` | Every matching tool (install), every outdated install (update), every recorded install (uninstall) |
+| `-n`, `--dry-run` | Print planned changes without touching files |
+| `--version` | With `installed`, append each tool's version |
+| `--raw` | With `install`/`update`, write `$NAME` placeholders instead of filling them |
+| `-h`, `--help` | Command and option summary |
+
+A named skill is never installed to a platform its folder doesn't support. With `--all`, unsupported platforms are skipped.
