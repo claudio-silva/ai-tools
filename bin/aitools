@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -15,9 +16,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-# resolve() follows symlinks, so a PATH link such as /usr/local/bin/aitools
+# resolve() follows symlinks, so a PATH link such as ~/bin/aitools
 # still uses the repository that contains the real script.
-REPO_ROOT = Path(__file__).resolve().parent.parent
+SCRIPT_PATH = Path(__file__).resolve()
+REPO_ROOT = SCRIPT_PATH.parent.parent
 SKILLS_ROOT = REPO_ROOT / "skills"
 CLONE_URL = "https://github.com/claudio-silva/ai-tools.git"
 
@@ -36,26 +38,22 @@ SKIP_DIR_NAMES = {"__pycache__", ".git"}
 VARIABLES = ("SKILLS_DIR", "SKILL_DIR", "PLATFORM_HOME", "CODEX_HOME", "HOME")
 
 HELP = """\
-Usage: ./bin/aitools <command> [skill...] [options]
-
 Manage this repository's skills for Cursor, Codex, Claude Code, and Devin.
 List, install, update, or remove skills, or get information about the provided ones.
 
-The folder under skills/ selects the platforms a skill supports: Shared
-(all four), Cursor, Codex, Claude, or Devin.
-
 Commands:
   install [skill...]     Install skills. Defaults to --global.
-  update [skill...]      Reinstall installed skills whose repository copy is
-                         newer. No names, or --all, updates every outdated
-                         install. Defaults to --global. Uninstalls, then installs.
+  update [skill...]      Reinstall installed skills whose local repository copy is
+                         newer. No names, or --all, updates every outdated install.
+                         Defaults to --global. Uninstalls, then installs.
   uninstall [skill...]   Remove skills this tool installed. Defaults to --global.
   list [skill...]        List skills in this repository, grouped by platform.
   installed [skill...]   List skills installed on each platform.
                          Defaults to both global and local.
-  about <skill>          Show one repository skill's version and metadata.
-  pull                   Download the latest commit of this repository.
-  help                   Show this help.
+  about <skill>          Shows information about a specific tool.
+  pull                   Updates the local tools repository to the latest online version.
+  setup                  Installs or removes this command globally, for easy access.
+  help                   (or --help) Show this help.
 
 Options:
   -g, --global           User-level directories. Default for install, update,
@@ -73,8 +71,9 @@ Options:
   --version              With installed, append each skill's version.
   -h, --help             Show this help.
 
-A version is vYYMMDDHHmm from the skill files' modification time.
-installed shows ▲ in place of ◉ when the repository copy is newer.
+setup options:
+  --remove               Remove ~/bin/aitools or ~/.local/bin/aitools when it
+                         links to this script.
 
 Install locations:
 
@@ -84,20 +83,29 @@ Install locations:
   claude-code   ~/.claude/skills          .claude/skills
   devin         ~/.config/devin/skills    .devin/skills
 
-$CODEX_HOME defaults to ~/.codex. Devin paths are for Devin for Terminal.
-Pass skill names to list or installed to show only those skills.
-Details are in skills/README.md.
+Notes:
+  installed displays:
+    ◎ for 3rd party skills,
+    ◉ for skills managed by this tool,
+    ▲ for managed skills that can be updated.
+  Version numbers have the vYYMMDDHHmm format, which is derived from the skill files'
+  modification time (whichever file is newer).
+  $CODEX_HOME defaults to ~/.codex
 
 Examples:
-  ./bin/aitools list
-  ./bin/aitools about auto-routing
-  ./bin/aitools installed --version
-  ./bin/aitools install --all
-  ./bin/aitools update
-  ./bin/aitools update --all
-  ./bin/aitools pull
-  ./bin/aitools install removebg-cli --platform cursor
-  ./bin/aitools uninstall auto-routing
+  aitools setup
+  aitools list
+  aitools about auto-routing
+  aitools installed --version
+  aitools install --all
+  aitools update
+  aitools update --all
+  aitools pull
+  aitools install removebg-cli --platform cursor
+  aitools uninstall auto-routing
+  aitools setup --remove
+
+For detailed information about all tools, read ABOUT_PATH
 """
 
 
@@ -159,6 +167,17 @@ def state_file() -> Path:
     base = os.environ.get("XDG_STATE_HOME")
     root = Path(base).expanduser() if base else home() / ".local" / "state"
     return root / "ai-tools" / "installs.json"
+
+
+def display_link(path: Path) -> str:
+    """Show a path as stored, without following a symlink at the end."""
+    expanded = path.expanduser()
+    try:
+        rel = expanded.relative_to(home())
+    except ValueError:
+        return str(expanded)
+    text = rel.as_posix()
+    return "~" if text == "." else "~/" + text
 
 
 def display(path: Path) -> str:
@@ -906,14 +925,18 @@ def platforms_for_skill(skill: Skill, platform_filter: list[str] | None, *, stri
 
 
 def require_skill_args(args: argparse.Namespace, command: str) -> None:
+    if command == "setup":
+        if getattr(args, "skills", None):
+            die("setup does not take skill names")
+        return
     args.skills = list(dict.fromkeys(args.skills))
     if args.all and args.skills:
         die("pass skill names or --all, not both")
     if command in ("install", "uninstall") and not args.all and not args.skills:
         die("name at least one skill, or pass --all")
-    if command in ("list", "installed", "about", "pull") and args.all:
+    if command in ("list", "installed", "about", "pull", "setup") and args.all:
         die(f"--all does not apply to {command}")
-    if command in ("list", "installed", "about", "pull") and args.dry_run:
+    if command in ("list", "installed", "about", "pull", "setup") and args.dry_run:
         die(f"--dry-run does not apply to {command}")
     if command == "list" and (args.scope_global or args.local or args.directory is not None):
         die("list shows skills in this repository; use installed for global and local installs")
@@ -1199,6 +1222,128 @@ def cmd_pull() -> int:
     return result.returncode
 
 
+def setup_dirs() -> list[Path]:
+    root = home()
+    return [root / "bin", root / ".local" / "bin"]
+
+
+def path_dir_on_path(directory: Path) -> bool:
+    try:
+        resolved = directory.expanduser().resolve()
+    except OSError:
+        return False
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        try:
+            if Path(entry).expanduser().resolve() == resolved:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def aitools_on_path() -> Path | None:
+    found = shutil.which("aitools")
+    if found is None:
+        return None
+    return Path(found)
+
+
+def setup_link_for(found: Path) -> Path | None:
+    """Return the install link when `found` lives in ~/bin or ~/.local/bin."""
+    absolute = found if found.is_absolute() else Path.cwd() / found
+    try:
+        parent = absolute.parent.resolve()
+    except OSError:
+        return None
+    for directory in setup_dirs():
+        try:
+            if parent != directory.resolve():
+                continue
+        except OSError:
+            continue
+        link = directory / "aitools"
+        if link.is_symlink() and link.resolve() == SCRIPT_PATH:
+            return link
+    return None
+
+
+def warn_if_shadowed(link: Path) -> None:
+    found = aitools_on_path()
+    installed = setup_link_for(found) if found is not None else None
+    if installed == link:
+        return
+    other = display_link(found) if found is not None else "not found"
+    print(f"note: aitools on PATH is {other}, so {display_link(link)} is hidden")
+
+
+def cmd_setup(remove: bool) -> None:
+    script = SCRIPT_PATH
+    links = [directory / "aitools" for directory in setup_dirs()]
+    if remove:
+        removed = False
+        for link in links:
+            if not link.is_symlink() or link.resolve() != script:
+                continue
+            link.unlink()
+            print(f"removed {display_link(link)}")
+            removed = True
+        if not removed:
+            places = " or ".join(display_link(link.parent) for link in links)
+            die(f"no link to this script in {places}")
+        return
+
+    found = aitools_on_path()
+    installed = setup_link_for(found) if found is not None else None
+    if installed is not None:
+        print(f"already set up: {display_link(installed)} -> {display(script)}")
+        return
+
+    available = [directory for directory in setup_dirs() if path_dir_on_path(directory)]
+    if not available:
+        die(
+            "~/bin and ~/.local/bin are not on PATH. "
+            "Create one of them, add it to PATH, and run setup again."
+        )
+
+    skipped: list[str] = []
+    for directory in available:
+        link = directory / "aitools"
+        if link.is_symlink():
+            target = link.resolve()
+            if target == script:
+                print(f"already linked: {display_link(link)} -> {display(script)}")
+                warn_if_shadowed(link)
+                return
+            skipped.append(f"{display_link(link)} links to {display(target)}")
+            continue
+        if link.exists():
+            skipped.append(f"{display_link(link)} exists and is not a symlink")
+            continue
+        if not directory.is_dir():
+            if directory.exists():
+                skipped.append(f"{display_link(directory)} exists and is not a directory")
+                continue
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                skipped.append(f"could not create {display_link(directory)}: {exc}")
+                continue
+        if not os.access(directory, os.W_OK):
+            skipped.append(f"{display_link(directory)} is not writable")
+            continue
+        try:
+            link.symlink_to(script)
+        except OSError as exc:
+            skipped.append(f"could not create {display_link(link)}: {exc}")
+            continue
+        print(f"linked {display_link(link)} -> {display(script)}")
+        warn_if_shadowed(link)
+        return
+    die("could not install aitools: " + "; ".join(skipped))
+
+
 def scan_skill_names(skills_dir: Path) -> list[str]:
     if not skills_dir.is_dir():
         return []
@@ -1326,32 +1471,150 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("-h", "--help", action="store_true")
         if name == "installed":
             command.add_argument("--version", action="store_true")
+    setup = sub.add_parser("setup", add_help=False)
+    setup.add_argument("--remove", dest="setup_remove", action="store_true")
+    setup.add_argument("-h", "--help", action="store_true")
     sub.add_parser("help", add_help=False)
     return parser
 
 
-USAGE = """\
-usage: ./bin/aitools <install|update|uninstall|list|installed|about|pull> [skill...] [options]
-Run ./bin/aitools --help for the commands and options.
-"""
+HELP_HEADINGS = {
+    "Commands:",
+    "Options:",
+    "setup options:",
+    "Install locations:",
+    "Notes:",
+    "Examples:",
+}
+COMMAND_NAMES = {
+    "install",
+    "update",
+    "uninstall",
+    "list",
+    "installed",
+    "about",
+    "pull",
+    "setup",
+    "help",
+}
+
+
+def argparse_theme():
+    try:
+        from _colorize import can_colorize, get_theme
+    except ImportError:
+        return None
+    if not can_colorize(file=sys.stdout):
+        return None
+    return get_theme(force_color=True).argparse
+
+
+def color_flags(text: str, theme) -> str:
+    parts = []
+    for token in text.split(", "):
+        if token.startswith("--"):
+            parts.append(f"{theme.long_option}{token}{theme.reset}")
+        elif token.startswith("-"):
+            parts.append(f"{theme.short_option}{token}{theme.reset}")
+        else:
+            parts.append(token)
+    return ", ".join(parts)
+
+
+def colorize_text(text: str) -> str:
+    theme = argparse_theme()
+    if theme is None:
+        return text
+    colored = []
+    for line in text.splitlines(keepends=True):
+        body = line[:-1] if line.endswith("\n") else line
+        newline = "\n" if line.endswith("\n") else ""
+        usage = re.match(r"^(Usage: |usage: )(\S+)(.*)$", body)
+        if usage:
+            colored.append(
+                f"{theme.usage}{usage.group(1)}{theme.reset}"
+                f"{theme.prog}{usage.group(2)}{theme.reset}"
+                f"{theme.prog_extra}{usage.group(3)}{theme.reset}{newline}"
+            )
+            continue
+        if body in HELP_HEADINGS:
+            colored.append(f"{theme.heading}{body}{theme.reset}{newline}")
+            continue
+        command = re.match(r"^(  )([a-z][\w-]*)(.*)$", body)
+        if command and command.group(2) in COMMAND_NAMES:
+            colored.append(
+                f"{command.group(1)}{theme.action}{command.group(2)}{theme.reset}"
+                f"{command.group(3)}{newline}"
+            )
+            continue
+        option = re.match(r"^(  )(-.*)(\s{2,}.*)$", body)
+        if option:
+            colored.append(
+                f"{option.group(1)}{color_flags(option.group(2), theme)}"
+                f"{option.group(3)}{newline}"
+            )
+            continue
+        example = re.match(r"^(  )(aitools)(.*)$", body)
+        if example:
+            colored.append(
+                f"{example.group(1)}{theme.prog}{example.group(2)}{theme.reset}"
+                f"{example.group(3)}{newline}"
+            )
+            continue
+        about = "For detailed information about the tools, read "
+        if body.startswith(about):
+            path = body[len(about):].removesuffix(".")
+            period = "." if body.endswith(".") else ""
+            colored.append(f"{about}\x1b[34m{path}{theme.reset}{period}{newline}")
+            continue
+        if body.startswith("installed shows "):
+            colored.append(f"{theme.summary_action}installed{theme.reset}{body[len('installed'):]}{newline}")
+            continue
+        if re.fullmatch(r"  Platform\s+Global\s+Local", body):
+            colored.append(f"\x1b[1m{body}{theme.reset}{newline}")
+            continue
+        colored.append(line)
+    return "".join(colored)
+
+
+def show_help() -> None:
+    text = HELP.replace("ABOUT_PATH", str(REPO_ROOT / "ABOUT.md"))
+    print(build_parser().format_usage(), end="")
+    print()
+    print(colorize_text(text), end="")
+
+
+def wants_help(argv: list[str]) -> bool:
+    for arg in argv:
+        if arg == "--":
+            break
+        if arg in ("-h", "--help"):
+            return True
+    return False
 
 
 def main(argv: list[str]) -> int:
+    if wants_help(argv):
+        show_help()
+        return 0
     parser = build_parser()
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
         return int(exc.code or 0)
-    if getattr(args, "help", False) or args.command == "help":
-        print(HELP, end="")
+    if args.command == "help":
+        show_help()
         return 0
     if args.command is None:
-        print(USAGE, end="")
+        print(parser.format_usage(), end="")
         return 1
     try:
         require_skill_args(args, args.command)
         if args.command == "pull":
             return cmd_pull()
+        if args.command == "setup":
+            cmd_setup(getattr(args, "setup_remove", False))
+            return 0
         skills = discover_skills()
         state = load_state()
         if args.command == "install":

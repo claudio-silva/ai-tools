@@ -1,12 +1,60 @@
-# Skills
+# About
 
-`bin/aitools` lists, installs, updates, and uninstalls the skills in this repository. Clone the repo and symlink the script onto your `PATH`; the link is followed back to this repository:
+This repository contains agent skills and MCP servers. `bin/aitools` installs the skills. `mcp/imagen` is an image-generation server.
+
+## imagen
+
+[imagen](mcp/imagen/) is a lightweight MCP server for OpenAI **gpt-image-2.5** image generation and editing, over stdio. It is a Go program with one direct dependency and compiles to a static binary. The full parameter tables are in [mcp/imagen/README.md](mcp/imagen/README.md).
+
+Tools:
+
+| Tool | What it does |
+| --- | --- |
+| `generate_image` | Create an image from a text prompt |
+| `edit_image` | Edit 1–16 existing images, with an optional mask |
+| `get_usage_guide` | Return the embedded prompting guide, also sent at `initialize` |
+
+`generate_image` and `edit_image` write the image to an absolute `outputPath`. Models are `gpt-image-2.5-flare` (default) and `gpt-image-2.5-sunburst`. Quality runs from `low` to `max`. `background` can be `transparent` for png or webp. `n` from 1 to 10 writes `name-1.ext` through `name-N.ext`.
+
+Build and install:
+
+```sh
+cd mcp/imagen
+make build      # mcp/imagen/bin/imagen
+make install    # ~/bin/imagen
+```
+
+Restart the MCP client after `make install`. A running server keeps the old binary in memory.
+
+| Env var | Default | Purpose |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | — | Required when a tool runs. The server starts without it. |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Endpoint override |
+| `IMAGEN_MODEL` | `gpt-image-2.5-flare` | Default model |
+
+```json
+{
+  "mcpServers": {
+    "imagen": {
+      "command": "/path/to/imagen",
+      "env": { "OPENAI_API_KEY": "sk-..." }
+    }
+  }
+}
+```
+
+## Skills
+
+`bin/aitools` lists, installs, updates, and uninstalls the skills in this repository. Clone the repo and run `aitools setup` to symlink the script to `~/bin/aitools` or `~/.local/bin/aitools`, whichever of those directories is on `PATH`; the link is followed back to this repository:
 
 ```sh
 git clone https://github.com/claudio-silva/ai-tools.git
-ln -s "$(pwd)/ai-tools/bin/aitools" /usr/local/bin/aitools
+cd ai-tools
+./bin/aitools setup
 aitools list
 ```
+
+`aitools setup --remove` removes that link when it points at this clone.
 
 `aitools pull` runs `git pull` in that clone and prints the commit, which is the repository version. A zip download has no commit to update.
 
@@ -35,6 +83,7 @@ The installer copies the files named in the manifest. It does not symlink, and i
 | `installed [skill...]` | List skills installed on each platform, then by scope |
 | `about <skill>` | Show one repository skill's version and metadata |
 | `pull` | Run `git pull` in this repository and print its commit |
+| `setup` | Symlink this script to `~/bin/aitools` or `~/.local/bin/aitools` when that directory is on `PATH` |
 | `help` | Show the command and option summary |
 
 `install`, `update`, and `uninstall` default to `--global`. `installed` defaults to both scopes. `list` and `about` show the repository only. `update` and `update --all` select every installed skill whose repository copy is newer. `install` and `uninstall` still need a skill name or `--all`.

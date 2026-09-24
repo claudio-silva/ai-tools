@@ -4,14 +4,15 @@ Custom-built skills, MCP servers, plugins and developer tools for AI environment
 
 ## Install
 
-Clone the repository and symlink `bin/aitools` onto your `PATH`. The link is followed to the real script, and that script's repository is the one the tool manages.
+Clone the repository, then run `aitools setup` from the clone (or `./bin/aitools setup` before the link exists). It symlinks the script to `~/bin/aitools` when that directory is on `PATH`, otherwise to `~/.local/bin/aitools`. The link is followed to the real script, and that script's repository is the one the tool manages.
 
 ```sh
 git clone https://github.com/claudio-silva/ai-tools.git
-ln -s "$(pwd)/ai-tools/bin/aitools" /usr/local/bin/aitools
+cd ai-tools
+./bin/aitools setup
 ```
 
-`/usr/local/bin` is the usual directory. `/usr/bin` is not a place to install this on macOS. To avoid writing outside your home directory, link it into a directory already on `PATH`, such as `~/.local/bin`.
+If neither `~/bin` nor `~/.local/bin` is on `PATH`, create one, add it to `PATH`, and run `setup` again. `aitools setup --remove` deletes a link in either directory when it points at this repository.
 
 `aitools pull` runs `git pull` in the clone and prints the current commit. That commit is the version of this repository. A zip download has no commit to compare or update; clone it instead.
 
@@ -23,7 +24,7 @@ ln -s "$(pwd)/ai-tools/bin/aitools" /usr/local/bin/aitools
 
 ## Skills
 
-Each skill is a directory under `skills/<Platform>/<name>/` with a `SKILL.md` and a `manifest.json`. The platform folder decides where it can be installed. Manage them with [`bin/aitools`](skills/README.md) — it copies the files the manifest names (no symlinks), updates a copy when the repository is newer, and can delete retired paths:
+Each skill is a directory under `skills/<Platform>/<name>/` with a `SKILL.md` and a `manifest.json`. The platform folder decides where it can be installed. Manage them with [`bin/aitools`](ABOUT.md) — it copies the files the manifest names (no symlinks), updates a copy when the repository is newer, and can delete retired paths:
 
 ```sh
 aitools list
@@ -73,4 +74,4 @@ skills/
   Devin/<skill>/            # devin (none yet)
 ```
 
-Install paths, scope flags, and the manifest format are documented in [skills/README.md](skills/README.md).
+Install paths, scope flags, the manifest format, and the imagen server are documented in [ABOUT.md](ABOUT.md).
