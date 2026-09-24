@@ -130,11 +130,11 @@ codex
 
 ## Versions
 
-A skill's version is `v` plus the local modification time of its newest manifest file, to the minute: `vYYMMDDHHmm`, for example `v2608151725`. There is no counter to bump. `about` prints the repository skill's version. `installed --version` prints the installed copy's version:
+A skill's version is `v` plus the local modification time of its newest manifest file, to the minute: `vYYMMDDHHmm`, for example `v2608151725`. There is no counter to bump. `about` prints the repository skill's version. `installed --version` prints the installed copy's version. When the repository is newer, it shows the installed version, then the repository version:
 
 ```text
 ◉ auto-routing - v2608151725
-▲ cursor-plugin-development - v2601010900
+▲ cursor-plugin-development - v2601010900 < v2608151725
 ```
 
 `update` reinstalls every selected skill whose repository copy is newer. It uninstalls that copy, then installs it, so files the current manifest does not list are removed. With no skill names, or with `--all`, it checks every installed skill from this repository.

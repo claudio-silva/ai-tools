@@ -1299,6 +1299,12 @@ def cmd_installed(args: argparse.Namespace, skills: list[Skill], state: dict) ->
                         mtime = None
                     if mtime is not None:
                         version = f" - {format_version(mtime)}"
+                    if newer and repo_skill is not None:
+                        repo_version = format_version(repo_mtime(repo_skill))
+                        if version:
+                            version = f"{version} < {repo_version}"
+                        else:
+                            version = f" - {repo_version}"
                 suffix = f"  ({', '.join(notes)})" if notes else ""
                 print(f"    {mark} {name}{version}{suffix}")
         print()
