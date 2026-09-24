@@ -29,8 +29,7 @@ Each skill is a directory under `skills/<Platform>/<name>/` with a `SKILL.md` an
 ```sh
 aitools list
 aitools install --all
-aitools mcp list
-aitools mcp install imagen
+aitools install imagen
 aitools installed
 aitools update
 aitools pull

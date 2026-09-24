@@ -16,7 +16,7 @@ Tools:
 
 `generate_image` and `edit_image` write the image to an absolute `outputPath`. Models are `gpt-image-2.5-flare` (default) and `gpt-image-2.5-sunburst`. Quality runs from `low` to `max`. `background` can be `transparent` for png or webp. `n` from 1 to 10 writes `name-1.ext` through `name-N.ext`.
 
-Install with `aitools mcp install imagen`. That copies the shipped binary and writes the server into each platform MCP config. Tool calls need `OPENAI_API_KEY`; install fills `$OPENAI_API_KEY` from the environment, or prompts for it. An empty answer at the prompt leaves the placeholder. Pass `--raw` to skip the prompt and leave placeholders. Restart the MCP client after installing.
+Install with `aitools install imagen`. That copies the shipped binary and writes the server into each platform MCP config. Tool calls need `OPENAI_API_KEY`; install fills `$OPENAI_API_KEY` from the environment, or prompts for it. An empty answer at the prompt leaves the placeholder. Pass `--raw` to skip the prompt and leave placeholders. Restart the MCP client after installing.
 
 To rebuild the binary during development:
 
@@ -64,17 +64,11 @@ The installer copies the files named in the manifest. It does not symlink, and i
 | `list [tool...]` | List tools in this repository, grouped by platform. MCP servers are marked `(mcp)` |
 | `installed [tool...]` | List tools installed on each platform, then by scope |
 | `about` / `info` / `show <tool>` | Show one repository tool's version, metadata, and install status by scope (◉, ◎, ▲, or not installed) |
-| `mcp list [name...]` | List MCP servers in this repository, grouped by platform |
-| `mcp installed [name...]` | List MCP servers in each platform config |
-| `mcp install [name...]` | Copy the shipped binary and write the server into the platform MCP config |
-| `mcp update [name...]` | Recopy the binary and rewrite the config when the shipped copy is newer |
-| `mcp uninstall [name...]` | Remove a server this tool recorded |
-| `mcp about` / `info` / `show <name>` | Same as above for an MCP server (includes install status) |
 | `pull` | Run `git pull` in this repository and print its commit |
 | `setup` | Symlink this script to `~/bin/aitools` or `~/.local/bin/aitools` when that directory is on `PATH` |
 | `help` | Show the command and option summary |
 
-`install`, `update`, and `uninstall` default to `--global`. `installed` defaults to both scopes. `list` and `about` / `info` / `show` show the repository only. `update` and `update --all` select every installed tool whose repository copy is newer. `install` and `uninstall` still need a tool name or `--all`. `install` and `update` take `--raw` when the tool is an MCP server. The `mcp` commands are the MCP-only form of the same actions.
+`install`, `update`, and `uninstall` default to `--global`. `installed` defaults to both scopes. `list` and `about` / `info` / `show` show the repository only. `update` and `update --all` select every installed tool whose repository copy is newer. `install` and `uninstall` still need a tool name or `--all`. `install` and `update` take `--raw` when the tool is an MCP server.
 
 ## Options
 
@@ -84,9 +78,9 @@ The installer copies the files named in the manifest. It does not symlink, and i
 | `-l`, `--local` | Project directories. Combine with `--global` to act on both. |
 | `-C`, `--directory DIR` | Project used for `--local`. Defaults to the current directory. Valid only when the local scope is included. |
 | `-p`, `--platform NAME` | Limit to one platform. Repeat the flag, or pass a comma-separated list: `cursor`, `codex`, `claude-code`, `devin`. |
-| `-a`, `--all` | `install` / `mcp install`: every matching tool in the repo. `update` / `mcp update`: every outdated install. `uninstall` / `mcp uninstall`: every recorded install for the selected scope and platforms. |
+| `-a`, `--all` | `install`: every matching tool in the repo. `update`: every outdated install. `uninstall`: every recorded install for the selected scope and platforms. |
 | `-n`, `--dry-run` | Print the copy and delete actions without changing anything. |
-| `--version` | With `installed` or `mcp installed`, append each tool's version. |
+| `--version` | With `installed`, append each tool's version. |
 | `--raw` | With `install` or `update` of an MCP server, write `$NAME` placeholders instead of filling them. |
 | `-h`, `--help` | Show the command and option summary. |
 
@@ -111,11 +105,8 @@ A named skill is never installed to a platform its folder does not support. With
 ./bin/aitools pull
 ./bin/aitools update auto-routing
 ./bin/aitools install auto-routing --dry-run
-./bin/aitools mcp list
-./bin/aitools mcp install imagen
-./bin/aitools mcp install imagen --raw
-./bin/aitools mcp installed --version
-./bin/aitools mcp uninstall imagen
+./bin/aitools install imagen --raw
+./bin/aitools uninstall imagen
 ```
 
 ## Where skills are installed
@@ -135,7 +126,7 @@ Codex loads custom agent TOML files from `$CODEX_HOME/agents` (usually `~/.codex
 
 ## Where MCP servers are installed
 
-Each MCP is `mcp/<name>/` with a `manifest.json` and a shipped binary at `mcp/<name>/bin/<name>`. `aitools mcp install` copies that binary to `~/bin/<name>` when `~/bin` exists and is writable, otherwise to `~/.local/bin/<name>`. Install stops if neither directory is available. The `settings` object is written into:
+Each MCP is `mcp/<name>/` with a `manifest.json` and a shipped binary at `mcp/<name>/bin/<name>`. `aitools install` copies that binary to `~/bin/<name>` when `~/bin` exists and is writable, otherwise to `~/.local/bin/<name>`. Install stops if neither directory is available. The `settings` object is written into:
 
 | Platform | Global | Local (project) |
 | --- | --- | --- |
@@ -205,9 +196,9 @@ A skill's version is `v` plus the local modification time of its newest manifest
 ▲ cursor-plugin-development - v2601010900 < v2608151725
 ```
 
-An MCP server's version uses the same format, from the binary's modification time. `mcp about` prints the shipped binary. `mcp installed --version` prints the installed copy.
+An MCP server's version uses the same format, from the binary's modification time. `about` prints the shipped binary. `installed --version` prints the installed copy.
 
-`update` reinstalls every selected skill whose repository copy is newer. It uninstalls that copy, then installs it, so files the current manifest does not list are removed. With no skill names, or with `--all`, it checks every installed skill from this repository. `mcp update` recopies the shipped binary and rewrites the config entry the same way.
+`update` reinstalls every selected skill whose repository copy is newer. It uninstalls that copy, then installs it, so files the current manifest does not list are removed. With no skill names, or with `--all`, it checks every installed tool from this repository. For an MCP server it recopies the shipped binary and rewrites the config entry.
 
 ## manifest.json
 

@@ -29,14 +29,12 @@ from common import (
     find_entry,
     format_version,
     home,
-    installed_scopes,
     print_about,
     load_json_object,
     load_state,
     make_target,
     present,
     project_dir,
-    render_installed,
     save_state,
     selected_platforms,
     selected_scopes,
@@ -420,29 +418,6 @@ def platforms_for_mcp(server: McpServer, platform_filter: list[str] | None, *, s
     return [name for name in server.platforms if name in platform_filter]
 
 
-def require_mcp_args(args: argparse.Namespace, command: str) -> None:
-    args.names = list(dict.fromkeys(getattr(args, "names", [])))
-    if args.all and args.names:
-        die("pass MCP names or --all, not both")
-    if command in ("install", "uninstall") and not args.all and not args.names:
-        die("name at least one MCP, or pass --all")
-    if command in ("list", "installed", "about") and args.all:
-        die(f"--all does not apply to mcp {command}")
-    if command in ("list", "installed", "about") and args.dry_run:
-        die(f"--dry-run does not apply to mcp {command}")
-    if command == "list" and (args.scope_global or args.local or args.directory is not None):
-        die("mcp list shows servers in this repository; use mcp installed for installs")
-    if command == "about":
-        if len(args.names) != 1:
-            die("mcp about, info, and show need one MCP name")
-        if args.scope_global or args.local or args.directory is not None or args.platform:
-            die("mcp about, info, and show list a repository server and do not take install options")
-    if getattr(args, "version", False) and command != "installed":
-        die("--version applies to mcp installed")
-    if getattr(args, "raw", False) and command not in ("install", "update"):
-        die("--raw applies to mcp install and mcp update")
-
-
 def resolve_mcp_names(servers: list[McpServer], names: list[str]) -> None:
     known = set(mcps_by_name(servers))
     missing = [name for name in names if name not in known]
@@ -723,30 +698,6 @@ def cmd_about(args: argparse.Namespace, servers: list[McpServer], state: dict) -
     print_about(server.name, "MCP server", fields, mcp_install_status(server, state), server.message)
 
 
-def cmd_list(args: argparse.Namespace, servers: list[McpServer]) -> None:
-    platform_filter = selected_platforms(args.platform)
-    name_filter = set(args.names)
-    platforms = platform_filter or list(PLATFORM_ORDER)
-    for platform in platforms:
-        print(platform)
-        names = sorted(
-            server.name
-            for server in servers
-            if platform in server.platforms and (not name_filter or server.name in name_filter)
-        )
-        if not names:
-            print("  (none)")
-        else:
-            for name in names:
-                print(f"  {name}")
-        print()
-
-
-def cmd_installed(args: argparse.Namespace, servers: list[McpServer], state: dict) -> None:
-    scopes, project = installed_scopes(args)
-    render_installed([("MCP servers", collect_installed(args, servers, state, scopes, project))], scopes, project)
-
-
 def collect_installed(
     args: argparse.Namespace,
     servers: list[McpServer],
@@ -821,34 +772,3 @@ def collect_installed(
                 suffix = f"  ({', '.join(notes)})" if notes else ""
                 rows.append(f"{mark} {name}{version}{suffix}")
     return groups
-
-
-def dispatch(args: argparse.Namespace) -> None:
-    command = args.mcp_command
-    if command in ("info", "show"):
-        command = "about"
-        args.mcp_command = "about"
-    if command is None:
-        die("mcp needs a command; try mcp list or mcp --help")
-    require_mcp_args(args, command)
-    servers = discover_mcps()
-    state = load_state()
-    if command == "install":
-        cmd_install(args, servers, state)
-    elif command == "update":
-        cmd_update(args, servers, state)
-    elif command == "uninstall":
-        cmd_uninstall(args, servers, state)
-    elif command == "about":
-        resolve_mcp_names(servers, args.names)
-        cmd_about(args, servers, state)
-    elif command == "list":
-        if args.names:
-            resolve_mcp_names(servers, args.names)
-        cmd_list(args, servers)
-    elif command == "installed":
-        if args.names:
-            resolve_mcp_requested(servers, args.names, state)
-        cmd_installed(args, servers, state)
-    else:
-        die(f"unknown mcp command {command}")

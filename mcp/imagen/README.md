@@ -22,7 +22,7 @@ Written in Go — one direct dependency ([mark3labs/mcp-go](https://github.com/m
 The Apple Silicon binary is shipped at `bin/imagen`. Install it into MCP clients with:
 
 ```sh
-aitools mcp install imagen
+aitools install imagen
 ```
 
 To rebuild during development:

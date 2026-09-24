@@ -52,8 +52,6 @@ Commands:
                          Defaults to both global and local.
   about|info|show <tool> Show information about a tool, including install
                          status (◉ managed, ◎ other, ▲ update, or not installed).
-  mcp <command>          MCP-only form of those commands. install and update
-                         also take --raw.
   pull                   Updates the local tools repository to the latest online version.
   setup                  Installs or removes this command globally, for easy access.
   help                   (or --help) Show this help.
@@ -307,18 +305,6 @@ def build_parser() -> argparse.ArgumentParser:
             command.add_argument("--raw", action="store_true")
     for name in ("about", "info", "show"):
         add_scope_flags(sub.add_parser(name, add_help=False))
-    mcp = sub.add_parser("mcp", add_help=False)
-    mcp.add_argument("-h", "--help", action="store_true")
-    mcp_sub = mcp.add_subparsers(dest="mcp_command")
-    for name in ("install", "uninstall", "list", "installed", "update"):
-        command = mcp_sub.add_parser(name, add_help=False)
-        add_scope_flags(command, names="names")
-        if name == "installed":
-            command.add_argument("--version", action="store_true")
-        if name in ("install", "update"):
-            command.add_argument("--raw", action="store_true")
-    for name in ("about", "info", "show"):
-        add_scope_flags(mcp_sub.add_parser(name, add_help=False), names="names")
     setup = sub.add_parser("setup", add_help=False)
     setup.add_argument("--remove", dest="setup_remove", action="store_true")
     setup.add_argument("-h", "--help", action="store_true")
@@ -343,7 +329,6 @@ COMMAND_NAMES = {
     "about",
     "info",
     "show",
-    "mcp",
     "pull",
     "setup",
     "help",
@@ -535,9 +520,6 @@ def main(argv: list[str]) -> int:
         if args.command == "setup":
             skill_cmds.require_skill_args(args, args.command)
             cmd_setup(getattr(args, "setup_remove", False))
-            return 0
-        if args.command == "mcp":
-            mcp_cmds.dispatch(args)
             return 0
         skill_cmds.require_skill_args(args, args.command)
         skills = skill_cmds.discover_skills()
