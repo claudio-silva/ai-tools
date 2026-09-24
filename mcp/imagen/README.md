@@ -19,14 +19,19 @@ Written in Go — one direct dependency ([mark3labs/mcp-go](https://github.com/m
 
 ## Build & install
 
+The Apple Silicon binary is shipped at `bin/imagen`. Install it into MCP clients with:
+
+```sh
+aitools mcp install imagen
+```
+
+To rebuild during development:
+
 ```sh
 make build      # → bin/imagen (static, current arch)
-make install    # → ~/bin/imagen
 make release    # → darwin arm64 + amd64 + lipo universal binary in bin/
 make test vet
 ```
-
-> **Note:** `make install` replaces `~/bin/imagen` in place safely even while a server instance is running — but a running MCP server keeps its old binary in memory. Restart your MCP client after installing so it picks up the new version.
 
 ## Configuration
 

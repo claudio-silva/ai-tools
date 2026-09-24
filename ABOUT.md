@@ -1,10 +1,10 @@
 # About
 
-This repository contains agent skills and MCP servers. `bin/aitools` installs the skills. `mcp/imagen` is an image-generation server.
+This repository's tools are skills, MCP servers, and, later, plugins. `bin/aitools` installs and manages them on macOS Apple Silicon. It copies skill files and shipped MCP binaries; it does not build.
 
 ## imagen
 
-[imagen](mcp/imagen/) is a lightweight MCP server for OpenAI **gpt-image-2.5** image generation and editing, over stdio. It is a Go program with one direct dependency and compiles to a static binary. The full parameter tables are in [mcp/imagen/README.md](mcp/imagen/README.md).
+[imagen](mcp/imagen/) is a lightweight MCP server for OpenAI **gpt-image-2.5** image generation and editing, over stdio. It is a Go program with one direct dependency and ships as a static `mcp/imagen/bin/imagen` binary. The full parameter tables are in [mcp/imagen/README.md](mcp/imagen/README.md).
 
 Tools:
 
@@ -16,31 +16,13 @@ Tools:
 
 `generate_image` and `edit_image` write the image to an absolute `outputPath`. Models are `gpt-image-2.5-flare` (default) and `gpt-image-2.5-sunburst`. Quality runs from `low` to `max`. `background` can be `transparent` for png or webp. `n` from 1 to 10 writes `name-1.ext` through `name-N.ext`.
 
-Build and install:
+Install with `aitools mcp install imagen`. That copies the shipped binary and writes the server into each platform MCP config. Tool calls need `OPENAI_API_KEY`; install fills `$OPENAI_API_KEY` from the environment, or prompts for it. An empty answer at the prompt leaves the placeholder. Pass `--raw` to skip the prompt and leave placeholders. Restart the MCP client after installing.
+
+To rebuild the binary during development:
 
 ```sh
 cd mcp/imagen
 make build      # mcp/imagen/bin/imagen
-make install    # ~/bin/imagen
-```
-
-Restart the MCP client after `make install`. A running server keeps the old binary in memory.
-
-| Env var | Default | Purpose |
-| --- | --- | --- |
-| `OPENAI_API_KEY` | — | Required when a tool runs. The server starts without it. |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Endpoint override |
-| `IMAGEN_MODEL` | `gpt-image-2.5-flare` | Default model |
-
-```json
-{
-  "mcpServers": {
-    "imagen": {
-      "command": "/path/to/imagen",
-      "env": { "OPENAI_API_KEY": "sk-..." }
-    }
-  }
-}
 ```
 
 ## Skills
@@ -76,17 +58,23 @@ The installer copies the files named in the manifest. It does not symlink, and i
 
 | Command | What it does |
 | --- | --- |
-| `install [skill...]` | Copy the selected skills into the platform directories |
-| `update [skill...]` | Reinstall installed skills whose repository copy is newer. No names, or `--all`, selects every outdated install |
-| `uninstall [skill...]` | Remove skills this tool previously installed |
-| `list [skill...]` | List skills in this repository, grouped by platform |
-| `installed [skill...]` | List skills installed on each platform, then by scope |
-| `about <skill>` | Show one repository skill's version and metadata |
+| `install [tool...]` | Install the named tools. Skills are copied from their manifest. MCP servers are copied from the shipped binary and written into the platform MCP config |
+| `update [tool...]` | Reinstall installed tools whose repository copy is newer. No names, or `--all`, selects every outdated install |
+| `uninstall [tool...]` | Remove tools this command previously installed |
+| `list [tool...]` | List tools in this repository, grouped by platform. MCP servers are marked `(mcp)` |
+| `installed [tool...]` | List tools installed on each platform, then by scope |
+| `about` / `info` / `show <tool>` | Show one repository tool's version, metadata, and install status by scope (◉, ◎, ▲, or not installed) |
+| `mcp list [name...]` | List MCP servers in this repository, grouped by platform |
+| `mcp installed [name...]` | List MCP servers in each platform config |
+| `mcp install [name...]` | Copy the shipped binary and write the server into the platform MCP config |
+| `mcp update [name...]` | Recopy the binary and rewrite the config when the shipped copy is newer |
+| `mcp uninstall [name...]` | Remove a server this tool recorded |
+| `mcp about` / `info` / `show <name>` | Same as above for an MCP server (includes install status) |
 | `pull` | Run `git pull` in this repository and print its commit |
 | `setup` | Symlink this script to `~/bin/aitools` or `~/.local/bin/aitools` when that directory is on `PATH` |
 | `help` | Show the command and option summary |
 
-`install`, `update`, and `uninstall` default to `--global`. `installed` defaults to both scopes. `list` and `about` show the repository only. `update` and `update --all` select every installed skill whose repository copy is newer. `install` and `uninstall` still need a skill name or `--all`.
+`install`, `update`, and `uninstall` default to `--global`. `installed` defaults to both scopes. `list` and `about` / `info` / `show` show the repository only. `update` and `update --all` select every installed tool whose repository copy is newer. `install` and `uninstall` still need a tool name or `--all`. `install` and `update` take `--raw` when the tool is an MCP server. The `mcp` commands are the MCP-only form of the same actions.
 
 ## Options
 
@@ -96,9 +84,10 @@ The installer copies the files named in the manifest. It does not symlink, and i
 | `-l`, `--local` | Project directories. Combine with `--global` to act on both. |
 | `-C`, `--directory DIR` | Project used for `--local`. Defaults to the current directory. Valid only when the local scope is included. |
 | `-p`, `--platform NAME` | Limit to one platform. Repeat the flag, or pass a comma-separated list: `cursor`, `codex`, `claude-code`, `devin`. |
-| `-a`, `--all` | `install`: every skill in the repo. `update`: every installed skill whose repository copy is newer. `uninstall`: every skill this tool has recorded for the selected scope and platforms. |
+| `-a`, `--all` | `install` / `mcp install`: every matching tool in the repo. `update` / `mcp update`: every outdated install. `uninstall` / `mcp uninstall`: every recorded install for the selected scope and platforms. |
 | `-n`, `--dry-run` | Print the copy and delete actions without changing anything. |
-| `--version` | With `installed`, append each skill's version. |
+| `--version` | With `installed` or `mcp installed`, append each tool's version. |
+| `--raw` | With `install` or `update` of an MCP server, write `$NAME` placeholders instead of filling them. |
 | `-h`, `--help` | Show the command and option summary. |
 
 A named skill is never installed to a platform its folder does not support. With `--all`, platforms a skill does not support are skipped, and each matching skill is installed only to the platforms you named.
@@ -114,12 +103,19 @@ A named skill is never installed to a platform its folder does not support. With
 ./bin/aitools list
 ./bin/aitools list --platform codex
 ./bin/aitools about auto-routing
+./bin/aitools about imagen
+./bin/aitools install imagen
 ./bin/aitools installed --version
 ./bin/aitools update
 ./bin/aitools update --all
 ./bin/aitools pull
 ./bin/aitools update auto-routing
 ./bin/aitools install auto-routing --dry-run
+./bin/aitools mcp list
+./bin/aitools mcp install imagen
+./bin/aitools mcp install imagen --raw
+./bin/aitools mcp installed --version
+./bin/aitools mcp uninstall imagen
 ```
 
 ## Where skills are installed
@@ -136,6 +132,21 @@ A Shared skill is copied once into each selected platform directory.
 Cursor discovers `.agents/skills` as a project skill directory on its own, so a local Codex install is also visible to Cursor. When **Include third-party Plugins, Skills, and other configs** is enabled, Cursor also discovers the other platforms' skill directories (`.codex/skills`, `.claude/skills`, and their `~/` equivalents). A Shared skill can therefore appear more than once in Cursor.
 
 Codex loads custom agent TOML files from `$CODEX_HOME/agents` (usually `~/.codex/agents`) and does not register a project `.codex/agents` directory. Manifests that install roles use `$CODEX_HOME/agents` for both global and local installs. Restart Codex after installing or removing those files.
+
+## Where MCP servers are installed
+
+Each MCP is `mcp/<name>/` with a `manifest.json` and a shipped binary at `mcp/<name>/bin/<name>`. `aitools mcp install` copies that binary to `~/bin/<name>` when `~/bin` exists and is writable, otherwise to `~/.local/bin/<name>`. Install stops if neither directory is available. The `settings` object is written into:
+
+| Platform | Global | Local (project) |
+| --- | --- | --- |
+| cursor | `~/.cursor/mcp.json` | `.cursor/mcp.json` |
+| codex | `$CODEX_HOME/config.toml` | `.codex/config.toml` |
+| claude-code | `~/.claude.json` | `.mcp.json` |
+| devin | `~/.config/devin/mcp_config.json` | `.devin/mcp_config.json` |
+
+String values in `settings` may contain `$BINARY` and `$NAME`. `$BINARY` is always the installed executable. Other `$NAME` placeholders are filled from the environment, or by a prompt. An empty answer at the prompt leaves the placeholder. `--raw` skips the prompt and leaves placeholders in the file. Secrets are written only into the platform config.
+
+An existing server entry that this tool did not record is left in place, and install stops for that destination. Uninstall removes the server key and a binary this tool copied to `~/bin` or `~/.local/bin` when no other recorded install still uses it.
 
 ## Install record
 
@@ -161,21 +172,29 @@ codex
 
 `installed` reads the platform directories, not only the record. A folder that contains `SKILL.md` is listed. ◉ marks a skill from this repository. ◎ marks a skill that is not in this repository. ▲ replaces ◉ when a file in the repository is newer than the installed copy. An installed copy that is newer than the repository keeps ◉. Files this tool installed outside the skill directory are counted on that line. A recorded skill whose directory is missing is still listed, so `uninstall` can remove the files that were installed beside it.
 
-```text
-cursor
-  global  ~/.cursor/skills
-    ◉ affinity-sdk
-    ▲ cursor-plugin-development
-    ◎ some-other-skill
-  local   ~/src/my-app/.cursor/skills
-    (none)
+Output is grouped by scope, then by tool kind, then by platform. Platforms with nothing installed are omitted, and a scope with nothing in it says so on one line.
 
-codex
-  global  ~/.codex/skills
-    ◉ auto-routing  (+ 9 files in ~/.codex/agents)
-  local   ~/src/my-app/.agents/skills
-    (none)
+```text
+Global
+
+  Skills
+    cursor       ~/.cursor/skills
+      ◉ affinity-sdk
+      ▲ cursor-plugin-development
+      ◎ some-other-skill
+    codex        ~/.codex/skills
+      ◉ auto-routing  (+ 9 files in ~/.codex/agents)
+
+  MCP servers
+    devin        ~/.config/devin/mcp_config.json
+      ◉ imagen
+      ◎ nano-banana
+
+Project  ~/src/my-app
+  nothing installed
 ```
+
+MCP servers are read from the platform MCP configs. The same marks apply: ◉ is an MCP from this repository, ◎ is not, ▲ when the shipped binary is newer than the installed copy or the recorded command path differs.
 
 ## Versions
 
@@ -186,7 +205,9 @@ A skill's version is `v` plus the local modification time of its newest manifest
 ▲ cursor-plugin-development - v2601010900 < v2608151725
 ```
 
-`update` reinstalls every selected skill whose repository copy is newer. It uninstalls that copy, then installs it, so files the current manifest does not list are removed. With no skill names, or with `--all`, it checks every installed skill from this repository.
+An MCP server's version uses the same format, from the binary's modification time. `mcp about` prints the shipped binary. `mcp installed --version` prints the installed copy.
+
+`update` reinstalls every selected skill whose repository copy is newer. It uninstalls that copy, then installs it, so files the current manifest does not list are removed. With no skill names, or with `--all`, it checks every installed skill from this repository. `mcp update` recopies the shipped binary and rewrites the config entry the same way.
 
 ## manifest.json
 

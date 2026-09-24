@@ -24,11 +24,13 @@ If neither `~/bin` nor `~/.local/bin` is on `PATH`, create one, add it to `PATH`
 
 ## Skills
 
-Each skill is a directory under `skills/<Platform>/<name>/` with a `SKILL.md` and a `manifest.json`. The platform folder decides where it can be installed. Manage them with [`bin/aitools`](ABOUT.md) — it copies the files the manifest names (no symlinks), updates a copy when the repository is newer, and can delete retired paths:
+Each skill is a directory under `skills/<Platform>/<name>/` with a `SKILL.md` and a `manifest.json`. The platform folder decides where it can be installed. Manage tools with [`bin/aitools`](ABOUT.md) — skills are copied from the manifest, MCP servers are copied as shipped binaries, and both can be listed, updated, and removed:
 
 ```sh
 aitools list
 aitools install --all
+aitools mcp list
+aitools mcp install imagen
 aitools installed
 aitools update
 aitools pull
@@ -64,8 +66,8 @@ Work in any MCP/agent environment; may carry env-specific metadata (e.g. `agents
 ## Layout
 
 ```
-bin/aitools                 # install, uninstall, and list skills
-mcp/<name>/                 # standalone MCP servers — each is its own project
+bin/aitools                 # manage skills and MCP servers
+mcp/<name>/                 # MCP server with manifest.json and shipped bin/<name>
 skills/
   Shared/<skill>/           # cursor, codex, claude-code, and devin
   Codex/<skill>/            # codex
