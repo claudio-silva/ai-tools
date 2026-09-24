@@ -29,7 +29,7 @@ scripts/codex-who-am-i --debug    # resolution decisions on stderr (no conversat
 From the repository root:
 
 ```sh
-./bin/skills install who-am-i
+./bin/aitools install who-am-i
 ```
 
 `Codex` installs this skill for Codex only. `manifest.json` copies `SKILL.md`, `scripts/`, and `agents/`. Restart Codex afterwards. See the [skills README](../../README.md).

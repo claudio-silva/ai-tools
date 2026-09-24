@@ -18,7 +18,7 @@ A verified field guide to Codex custom subagents — where agent definitions liv
 From the repository root:
 
 ```sh
-./bin/skills install working-with-codex-subagents
+./bin/aitools install working-with-codex-subagents
 ```
 
 `Codex` installs this skill for Codex only. `manifest.json` copies `SKILL.md`. See the [skills README](../../README.md).

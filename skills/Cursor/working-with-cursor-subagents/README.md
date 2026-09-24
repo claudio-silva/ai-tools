@@ -16,7 +16,7 @@ Verified behavior of Cursor subagents: where agent files live, how the Task tool
 From the repository root:
 
 ```sh
-./bin/skills install working-with-cursor-subagents
+./bin/aitools install working-with-cursor-subagents
 ```
 
 `Cursor` installs this skill for Cursor only. `manifest.json` copies `SKILL.md`. See the [skills README](../../README.md).

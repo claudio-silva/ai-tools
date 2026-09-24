@@ -4,16 +4,16 @@ Custom-built skills, MCP servers, plugins and developer tools for AI environment
 
 ## Install
 
-Clone the repository and symlink `bin/skills` onto your `PATH`. The link is followed to the real script, and that script's repository is the one the tool manages.
+Clone the repository and symlink `bin/aitools` onto your `PATH`. The link is followed to the real script, and that script's repository is the one the tool manages.
 
 ```sh
 git clone https://github.com/claudio-silva/ai-tools.git
-ln -s "$(pwd)/ai-tools/bin/skills" /usr/local/bin/skills
+ln -s "$(pwd)/ai-tools/bin/aitools" /usr/local/bin/aitools
 ```
 
 `/usr/local/bin` is the usual directory. `/usr/bin` is not a place to install this on macOS. To avoid writing outside your home directory, link it into a directory already on `PATH`, such as `~/.local/bin`.
 
-`skills pull` runs `git pull` in the clone and prints the current commit. That commit is the version of this repository. A zip download has no commit to compare or update; clone it instead.
+`aitools pull` runs `git pull` in the clone and prints the current commit. That commit is the version of this repository. A zip download has no commit to compare or update; clone it instead.
 
 ## MCP servers
 
@@ -23,14 +23,14 @@ ln -s "$(pwd)/ai-tools/bin/skills" /usr/local/bin/skills
 
 ## Skills
 
-Each skill is a directory under `skills/<Platform>/<name>/` with a `SKILL.md` and a `manifest.json`. The platform folder decides where it can be installed. Manage them with [`bin/skills`](skills/README.md) — it copies the files the manifest names (no symlinks), updates a copy when the repository is newer, and can delete retired paths:
+Each skill is a directory under `skills/<Platform>/<name>/` with a `SKILL.md` and a `manifest.json`. The platform folder decides where it can be installed. Manage them with [`bin/aitools`](skills/README.md) — it copies the files the manifest names (no symlinks), updates a copy when the repository is newer, and can delete retired paths:
 
 ```sh
-skills list
-skills install --all
-skills installed
-skills update
-skills pull
+aitools list
+aitools install --all
+aitools installed
+aitools update
+aitools pull
 ```
 
 ### Cross-environment — `skills/Shared/`
@@ -63,7 +63,7 @@ Work in any MCP/agent environment; may carry env-specific metadata (e.g. `agents
 ## Layout
 
 ```
-bin/skills                  # install, uninstall, and list skills
+bin/aitools                 # install, uninstall, and list skills
 mcp/<name>/                 # standalone MCP servers — each is its own project
 skills/
   Shared/<skill>/           # cursor, codex, claude-code, and devin

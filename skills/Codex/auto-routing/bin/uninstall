@@ -2,4 +2,4 @@
 # Uninstall auto-routing through the repository skill tool.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../../../.." && pwd)"
-exec "$REPO/bin/skills" uninstall auto-routing "$@"
+exec "$REPO/bin/aitools" uninstall auto-routing "$@"

@@ -21,7 +21,7 @@ An agent skill that overrides the official **Affinity by Canva MCP** instruction
 From the repository root:
 
 ```sh
-./bin/skills install affinity-sdk
+./bin/aitools install affinity-sdk
 ```
 
 `Shared` installs this skill for Cursor, Codex, Claude Code, and Devin. `manifest.json` copies `SKILL.md`. See the [skills README](../../README.md).

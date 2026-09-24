@@ -22,7 +22,7 @@ A verified guide to developing Cursor plugins — commands, skills, subagents an
 From the repository root:
 
 ```sh
-./bin/skills install cursor-plugin-development
+./bin/aitools install cursor-plugin-development
 ```
 
 `Cursor` installs this skill for Cursor only. `manifest.json` copies `SKILL.md` and `references/`. See the [skills README](../../README.md).

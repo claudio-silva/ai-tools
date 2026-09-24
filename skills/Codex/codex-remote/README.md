@@ -28,7 +28,7 @@ Three components with deliberately separated concerns:
 From the repository root:
 
 ```sh
-./bin/skills install codex-remote
+./bin/aitools install codex-remote
 ```
 
 `Codex` installs this skill for Codex only. The manifest copies `SKILL.md`, `scripts/remote.py`, `scripts/worker.py`, and `references/` into the Codex skills directory, and copies `agents/codex_remote_relay.toml` into `$CODEX_HOME/agents`. Restart Codex so it discovers the relay role. See the [skills README](../../README.md).

@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-# resolve() follows symlinks, so a PATH link such as /usr/local/bin/skills
+# resolve() follows symlinks, so a PATH link such as /usr/local/bin/aitools
 # still uses the repository that contains the real script.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILLS_ROOT = REPO_ROOT / "skills"
@@ -36,7 +36,7 @@ SKIP_DIR_NAMES = {"__pycache__", ".git"}
 VARIABLES = ("SKILLS_DIR", "SKILL_DIR", "PLATFORM_HOME", "CODEX_HOME", "HOME")
 
 HELP = """\
-Usage: ./bin/skills <command> [skill...] [options]
+Usage: ./bin/aitools <command> [skill...] [options]
 
 Manage this repository's skills for Cursor, Codex, Claude Code, and Devin.
 List, install, update, or remove skills, or get information about the provided ones.
@@ -89,15 +89,15 @@ Pass skill names to list or installed to show only those skills.
 Details are in skills/README.md.
 
 Examples:
-  ./bin/skills list
-  ./bin/skills about auto-routing
-  ./bin/skills installed --version
-  ./bin/skills install --all
-  ./bin/skills update
-  ./bin/skills update --all
-  ./bin/skills pull
-  ./bin/skills install removebg-cli --platform cursor
-  ./bin/skills uninstall auto-routing
+  ./bin/aitools list
+  ./bin/aitools about auto-routing
+  ./bin/aitools installed --version
+  ./bin/aitools install --all
+  ./bin/aitools update
+  ./bin/aitools update --all
+  ./bin/aitools pull
+  ./bin/aitools install removebg-cli --platform cursor
+  ./bin/aitools uninstall auto-routing
 """
 
 
@@ -1183,7 +1183,7 @@ def cmd_pull() -> int:
     if not (REPO_ROOT / ".git").exists():
         die(
             f"{display(REPO_ROOT)} is not a git clone, so there is no history to update. "
-            f"Clone {CLONE_URL} and symlink bin/skills onto your PATH."
+            f"Clone {CLONE_URL} and symlink bin/aitools onto your PATH."
         )
     git = shutil.which("git")
     if git is None:
@@ -1311,7 +1311,7 @@ def cmd_installed(args: argparse.Namespace, skills: list[Skill], state: dict) ->
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="skills", add_help=False)
+    parser = argparse.ArgumentParser(prog="aitools", add_help=False)
     parser.add_argument("-h", "--help", action="store_true")
     sub = parser.add_subparsers(dest="command")
     for name in ("install", "uninstall", "list", "installed", "update", "about", "pull"):
@@ -1331,8 +1331,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 USAGE = """\
-usage: ./bin/skills <install|update|uninstall|list|installed|about|pull> [skill...] [options]
-Run ./bin/skills --help for the commands and options.
+usage: ./bin/aitools <install|update|uninstall|list|installed|about|pull> [skill...] [options]
+Run ./bin/aitools --help for the commands and options.
 """
 
 

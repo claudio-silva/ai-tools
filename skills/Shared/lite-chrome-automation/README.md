@@ -96,7 +96,7 @@ Since Chrome 136, `--remote-debugging-port` is ignored on the **default** user-d
 From the repository root:
 
 ```sh
-./bin/skills install lite-chrome-automation
+./bin/aitools install lite-chrome-automation
 ```
 
 `Shared` installs this skill for Cursor, Codex, Claude Code, and Devin. `manifest.json` copies `SKILL.md` and `cdp.mjs`. See the [skills README](../../README.md).

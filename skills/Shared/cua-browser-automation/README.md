@@ -76,7 +76,7 @@ browse close $A $B
 From the repository root, into any environment where `cua-driver` is installed:
 
 ```sh
-./bin/skills install cua-browser-automation
+./bin/aitools install cua-browser-automation
 ```
 
 `Shared` installs this skill for Cursor, Codex, Claude Code, and Devin. `manifest.json` copies `SKILL.md` and `browse`. See the [skills README](../../README.md).

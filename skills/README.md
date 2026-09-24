@@ -1,14 +1,14 @@
 # Skills
 
-`bin/skills` lists, installs, updates, and uninstalls the skills in this repository. Clone the repo and symlink the script onto your `PATH`; the link is followed back to this repository:
+`bin/aitools` lists, installs, updates, and uninstalls the skills in this repository. Clone the repo and symlink the script onto your `PATH`; the link is followed back to this repository:
 
 ```sh
 git clone https://github.com/claudio-silva/ai-tools.git
-ln -s "$(pwd)/ai-tools/bin/skills" /usr/local/bin/skills
-skills list
+ln -s "$(pwd)/ai-tools/bin/aitools" /usr/local/bin/aitools
+aitools list
 ```
 
-`skills pull` runs `git pull` in that clone and prints the commit, which is the repository version. A zip download has no commit to update.
+`aitools pull` runs `git pull` in that clone and prints the commit, which is the repository version. A zip download has no commit to update.
 
 A skill is a directory under `skills/<Platform>/<name>/` with a `SKILL.md` and a `manifest.json`. The folder name selects the platforms that skill can be installed to:
 
@@ -55,22 +55,22 @@ The installer copies the files named in the manifest. It does not symlink, and i
 A named skill is never installed to a platform its folder does not support. With `--all`, platforms a skill does not support are skipped, and each matching skill is installed only to the platforms you named.
 
 ```sh
-./bin/skills install removebg-cli --platform cursor
-./bin/skills install --all --platform cursor
-./bin/skills install auto-routing
-./bin/skills install --local --directory ~/src/my-app affinity-sdk
-./bin/skills install --global --local removebg-cli
-./bin/skills uninstall auto-routing
-./bin/skills uninstall --all --local
-./bin/skills list
-./bin/skills list --platform codex
-./bin/skills about auto-routing
-./bin/skills installed --version
-./bin/skills update
-./bin/skills update --all
-./bin/skills pull
-./bin/skills update auto-routing
-./bin/skills install auto-routing --dry-run
+./bin/aitools install removebg-cli --platform cursor
+./bin/aitools install --all --platform cursor
+./bin/aitools install auto-routing
+./bin/aitools install --local --directory ~/src/my-app affinity-sdk
+./bin/aitools install --global --local removebg-cli
+./bin/aitools uninstall auto-routing
+./bin/aitools uninstall --all --local
+./bin/aitools list
+./bin/aitools list --platform codex
+./bin/aitools about auto-routing
+./bin/aitools installed --version
+./bin/aitools update
+./bin/aitools update --all
+./bin/aitools pull
+./bin/aitools update auto-routing
+./bin/aitools install auto-routing --dry-run
 ```
 
 ## Where skills are installed
