@@ -489,6 +489,20 @@ func TestExpandMcpFiles(t *testing.T) {
 	}
 }
 
+func TestExpandMcpFilesEscapes(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "mcp", "srv", "server.py"), "print(1)")
+	for _, to := range []string{"../evil.py", "$HOME/evil.py"} {
+		server := &McpServer{
+			Name:  "srv",
+			Path:  filepath.Join(root, "mcp", "srv"),
+			Root:  root,
+			Files: []manifestEntry{{from: "server.py", to: to}},
+		}
+		mustDie(t, func() { expandMcpFiles(server, filepath.Join(t.TempDir(), "srv")) })
+	}
+}
+
 // --- frontmatter -----------------------------------------------------------------
 
 func TestParseFrontmatter(t *testing.T) {
@@ -514,7 +528,7 @@ func TestPlanUninstall(t *testing.T) {
 	}}
 	m := manifest{}
 	key := data.Installs[0].key()
-	plan := planUninstall("test", target, &m, data, map[entryKey]bool{key: true})
+	plan := planUninstall("test", target, &m, data, map[entryKey]bool{key: true}, false)
 	var removed []string
 	for _, a := range plan.Actions {
 		if a.Kind == "remove" {
@@ -561,4 +575,131 @@ func TestMcpSettingsJSONRoundTrip(t *testing.T) {
 	if back["command"] != "x" {
 		t.Error("round trip failed")
 	}
+}
+
+// --- force and deletion safety ---------------------------------------------------
+
+func TestSaveStateEmptyInstalls(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", tmp)
+	saveState(&stateData{Version: 1})
+	raw, err := os.ReadFile(filepath.Join(tmp, "ai-tools", "installs.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"installs": []`) {
+		t.Fatalf("empty installs must serialize as [], got: %s", raw)
+	}
+	loaded := loadState() // must not die on its own empty file
+	if len(loaded.Installs) != 0 {
+		t.Fatalf("loaded %+v", loaded.Installs)
+	}
+}
+
+func TestKeyIgnoresStaleProjectOnGlobal(t *testing.T) {
+	// records written by the old tool during -gl runs carry a project on
+	// global entries; a plain -g lookup must still match them
+	entry := installEntry{Kind: "skill", Skill: "s", Platform: "devin",
+		Scope: "global", Project: "/some/project", SkillDir: "/x/skills/s"}
+	target := Target{Platform: "devin", Scope: "global", SkillDir: "/x/skills/s"}
+	if findEntry([]installEntry{entry}, target.key("s"), "skill") == nil {
+		t.Error("global entry with stale project not matched by -g key")
+	}
+	data := &stateData{Installs: []installEntry{entry}}
+	dropInstall(data, "s", target, "skill")
+	if len(data.Installs) != 0 {
+		t.Error("dropInstall kept the entry")
+	}
+	// local entries still match on project
+	lEntry := installEntry{Kind: "skill", Skill: "s", Platform: "devin",
+		Scope: "local", Project: "/p1", SkillDir: "/p1/.devin/skills/s"}
+	lTarget := Target{Platform: "devin", Scope: "local", Project: "/p2",
+		SkillDir: "/p2/.devin/skills/s"}
+	if findEntry([]installEntry{lEntry}, lTarget.key("s"), "skill") != nil {
+		t.Error("local entries from different projects must not match")
+	}
+}
+
+func TestPlanInstallForceForeignDir(t *testing.T) {
+	project := t.TempDir()
+	target := testTarget(t, project)
+	_, skill := fixtureRepo(t, "Shared/test", `{"install": ["SKILL.md"]}`, nil)
+	if err := os.MkdirAll(target.SkillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(target.SkillDir, "foreign.txt"), "x")
+	data := &stateData{}
+
+	// without force: refuses
+	mustDie(t, func() { planInstall(skill, target, data, nil, false, false) })
+	// with force: whole dir is dropped before the copies
+	plan := planInstall(skill, target, data, nil, false, true)
+	if len(plan.Actions) == 0 || plan.Actions[0].Kind != "remove" ||
+		plan.Actions[0].Path != target.SkillDir {
+		t.Fatalf("first action = %+v", plan.Actions[0])
+	}
+}
+
+func TestPlanInstallSymlinkAborts(t *testing.T) {
+	project := t.TempDir()
+	target := testTarget(t, project)
+	real := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(target.SkillDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, target.SkillDir); err != nil {
+		t.Fatal(err)
+	}
+	_, skill := fixtureRepo(t, "Shared/test", `{"install": ["SKILL.md"]}`, nil)
+	mustDie(t, func() { planInstall(skill, target, &stateData{}, nil, false, true) })
+}
+
+func TestPlanUninstallForceForeignDir(t *testing.T) {
+	project := t.TempDir()
+	target := testTarget(t, project)
+	if err := os.MkdirAll(target.SkillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data := &stateData{}
+	// no record, no force: nothing to do
+	if plan := planUninstall("test", target, nil, data, nil, false); plan != nil {
+		t.Fatalf("expected nil plan, got %+v", plan)
+	}
+	// no record + force: remove just the directory
+	plan := planUninstall("test", target, nil, data, nil, true)
+	if len(plan.Actions) != 1 || plan.Actions[0].Kind != "remove" ||
+		plan.Actions[0].Path != target.SkillDir {
+		t.Fatalf("plan = %+v", plan.Actions)
+	}
+}
+
+func TestPlanUninstallSymlinkAborts(t *testing.T) {
+	project := t.TempDir()
+	target := testTarget(t, project)
+	real := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(target.SkillDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, target.SkillDir); err != nil {
+		t.Fatal(err)
+	}
+	mustDie(t, func() { planUninstall("test", target, nil, &stateData{}, nil, true) })
+}
+
+func TestPlanUninstallRejectsTamperedPaths(t *testing.T) {
+	project := t.TempDir()
+	target := testTarget(t, project)
+	if err := os.MkdirAll(target.SkillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// a state record pointing outside every sanctioned root must not be removed
+	data := &stateData{Installs: []installEntry{
+		{Kind: "skill", Skill: "test", Platform: target.Platform, Scope: target.Scope,
+			Project: resolve(project), SkillDir: resolve(target.SkillDir),
+			ExternalFiles: []string{"/etc/passwd"}},
+	}}
+	key := data.Installs[0].key()
+	mustDie(t, func() {
+		planUninstall("test", target, nil, data, map[entryKey]bool{key: true}, false)
+	})
 }

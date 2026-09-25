@@ -53,6 +53,14 @@ func loadState() *stateData {
 }
 
 func saveState(data *stateData) {
+	if data.Installs == nil {
+		data.Installs = []installEntry{}
+	}
+	for i := range data.Installs {
+		if data.Installs[i].Scope != "local" {
+			data.Installs[i].Project = ""
+		}
+	}
 	raw, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		die("cannot encode install record: %v", err)
@@ -79,7 +87,13 @@ func (e *installEntry) toolName() string {
 }
 
 func (e *installEntry) key() entryKey {
-	return entryKey{e.toolName(), e.Platform, e.Scope, e.Project}
+	// Project only scopes local installs; records written by the old tool may
+	// carry a stale project on global entries, so ignore it for other scopes.
+	project := e.Project
+	if e.Scope != "local" {
+		project = ""
+	}
+	return entryKey{e.toolName(), e.Platform, e.Scope, project}
 }
 
 func findEntry(installs []installEntry, key entryKey, kind string) *installEntry {

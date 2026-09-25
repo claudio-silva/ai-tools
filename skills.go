@@ -659,14 +659,15 @@ func parseFrontmatter(path string) map[string]string {
 	return meta
 }
 
-func planInstall(skill Skill, target Target, data *stateData, skipKeys map[entryKey]bool, replace bool) *Plan {
+func planInstall(skill Skill, target Target, data *stateData, skipKeys map[entryKey]bool, replace, force bool) *Plan {
 	m := loadManifest(skill)
 	if isSymlink(target.SkillDir) {
-		die("%s is a symlink; this tool only manages real directories", display(target.SkillDir))
+		die("%s is a symlink; refusing to install over it. Remove the link manually.", displayLink(target.SkillDir))
 	}
 	key := target.key(skill.Name)
 	current := findEntry(data.Installs, key, "skill")
-	if exists(target.SkillDir) && current == nil && !replace {
+	foreign := present(target.SkillDir) && current == nil
+	if foreign && !replace && !force {
 		die("%s already exists and was not installed by this tool. Move it aside, then install again.", display(target.SkillDir))
 	}
 	if current != nil && resolve(current.SkillDir) != resolve(target.SkillDir) {
@@ -705,6 +706,12 @@ func planInstall(skill Skill, target Target, data *stateData, skipKeys map[entry
 	sort.Strings(external)
 
 	plan := &Plan{Skill: skill, Target: target, ExternalFiles: external}
+	if foreign && !replace {
+		// install --force over an unmanaged directory: drop it wholesale before
+		// the copies land, so no foreign files get mixed into the install. The
+		// path stays unresolved so a symlink is trashed, not its target.
+		plan.Actions = append(plan.Actions, Action{Kind: "remove", Path: target.SkillDir})
+	}
 	for _, path := range removes {
 		if !present(path) {
 			continue
@@ -728,24 +735,37 @@ func planInstall(skill Skill, target Target, data *stateData, skipKeys map[entry
 			plan.Actions = append(plan.Actions, Action{Kind: "remove", Path: path})
 		}
 		for _, item := range current.ExternalFiles {
-			path := item
-			if contains(external, resolve(path)) {
+			path := resolveAllowed(item, target, "cannot remove")
+			if contains(external, path) {
 				continue
 			}
 			if stillNeeded(data.Installs, path, skipKeys) {
-				plan.Actions = append(plan.Actions, Action{Kind: "keep", Path: resolve(path), Note: "still used by another install"})
+				plan.Actions = append(plan.Actions, Action{Kind: "keep", Path: path, Note: "still used by another install"})
 			} else if present(path) {
-				plan.Actions = append(plan.Actions, Action{Kind: "remove", Path: resolve(path)})
+				plan.Actions = append(plan.Actions, Action{Kind: "remove", Path: path})
 			}
 		}
 	}
 	return plan
 }
 
-func planUninstall(skillName string, target Target, m *manifest, data *stateData, skipKeys map[entryKey]bool) *Plan {
+func planUninstall(skillName string, target Target, m *manifest, data *stateData, skipKeys map[entryKey]bool, force bool) *Plan {
+	if isSymlink(target.SkillDir) {
+		die("%s is a symlink; refusing to remove it. Remove the link manually.", displayLink(target.SkillDir))
+	}
 	current := findEntry(data.Installs, target.key(skillName), "skill")
 	if current == nil {
-		return nil
+		if !force || !present(target.SkillDir) {
+			return nil
+		}
+		// --force: drop an unrecorded directory; we have no metadata about its
+		// parts, so only the directory itself is removed. The path stays
+		// unresolved so a symlink is trashed, not its target.
+		return &Plan{
+			Skill:   Skill{Name: skillName, Path: "."},
+			Target:  target,
+			Actions: []Action{{Kind: "remove", Path: target.SkillDir}},
+		}
 	}
 	plan := &Plan{Skill: Skill{Name: skillName, Path: "."}, Target: target}
 	if m != nil {
@@ -761,14 +781,16 @@ func planUninstall(skillName string, target Target, m *manifest, data *stateData
 		}
 	}
 	for _, item := range current.ExternalFiles {
-		path := item
+		// recorded paths are revalidated before removal — a tampered or
+		// stale state file must not expand what this command can delete
+		path := resolveAllowed(item, target, "cannot remove")
 		if stillNeeded(data.Installs, path, skipKeys) {
 			plan.Actions = append(plan.Actions, Action{Kind: "keep", Path: path, Note: "still used by another install"})
 		} else if present(path) {
 			plan.Actions = append(plan.Actions, Action{Kind: "remove", Path: path})
 		}
 	}
-	skillDir := current.SkillDir
+	skillDir := resolveAllowed(current.SkillDir, target, "cannot remove")
 	if stillNeeded(data.Installs, skillDir, skipKeys) {
 		plan.Actions = append(plan.Actions, Action{Kind: "keep", Path: skillDir, Note: "still used by another install"})
 	} else if present(skillDir) {
@@ -902,7 +924,7 @@ func skillCmdInstall(args *cliArgs, cat *catalog, names []string, data *stateDat
 		}
 	}
 	for _, t := range targets {
-		plans = append(plans, planInstall(t.skill, t.target, data, skipKeys, false))
+		plans = append(plans, planInstall(t.skill, t.target, data, skipKeys, false, args.force))
 	}
 
 	if args.dryRun {
@@ -965,7 +987,9 @@ func skillCmdUninstall(args *cliArgs, cat *catalog, names []string, data *stateD
 			selected = append(selected, selection{e.Skill, target, m})
 		}
 	} else {
-		resolveRequested(cat.skills, names, data)
+		if !args.force {
+			resolveRequested(cat.skills, names, data)
+		}
 		for _, name := range names {
 			skill, inRepo := byName[name]
 			platforms := platformOrder
@@ -984,6 +1008,9 @@ func skillCmdUninstall(args *cliArgs, cat *catalog, names []string, data *stateD
 				for _, platform := range platforms {
 					target := makeTarget(platform, scope, project, name)
 					if findEntry(data.Installs, target.key(name), "skill") != nil {
+						selected = append(selected, selection{name, target, m})
+						matched = true
+					} else if args.force && present(target.SkillDir) {
 						selected = append(selected, selection{name, target, m})
 						matched = true
 					}
@@ -1008,7 +1035,7 @@ func skillCmdUninstall(args *cliArgs, cat *catalog, names []string, data *stateD
 	}
 	var plans []*Plan
 	for _, s := range selected {
-		if plan := planUninstall(s.name, s.target, s.manifest, data, skipKeys); plan != nil {
+		if plan := planUninstall(s.name, s.target, s.manifest, data, skipKeys, args.force); plan != nil {
 			plans = append(plans, plan)
 		}
 	}
@@ -1114,7 +1141,7 @@ func skillCmdUpdate(args *cliArgs, cat *catalog, names []string, data *stateData
 		fmt.Printf("%s %s → %s (%s)\n", verb, skill.Name, target.Platform, target.Scope)
 		entry := findEntry(data.Installs, key, "skill")
 		if entry != nil {
-			removal := planUninstall(skill.Name, target, &m, data, map[entryKey]bool{key: true})
+			removal := planUninstall(skill.Name, target, &m, data, map[entryKey]bool{key: true}, false)
 			if removal != nil {
 				for _, action := range removal.Actions {
 					if action.Kind == "remove" {
@@ -1130,12 +1157,15 @@ func skillCmdUpdate(args *cliArgs, cat *catalog, names []string, data *stateData
 				}
 			}
 		} else if present(target.SkillDir) {
+			if isSymlink(target.SkillDir) {
+				die("%s is a symlink; refusing to update over it. Remove the link manually.", displayLink(target.SkillDir))
+			}
 			fmt.Printf("  remove %s\n", display(target.SkillDir))
 			if !args.dryRun {
 				trashPath(target.SkillDir)
 			}
 		}
-		fresh := planInstall(skill, target, data, map[entryKey]bool{key: true}, true)
+		fresh := planInstall(skill, target, data, map[entryKey]bool{key: true}, true, args.force)
 		installVerb := "installed"
 		if args.dryRun {
 			installVerb = "would install"
@@ -1163,9 +1193,13 @@ func skillInstallStatus(skill Skill, data *stateData) [][3]string {
 			if !isFile(filepath.Join(target.SkillDir, "SKILL.md")) {
 				continue
 			}
-			mark := "◉"
-			if repoIsNewer(skill, target) {
-				mark = "▲"
+			entry := findEntry(data.Installs, target.key(skill.Name), "skill")
+			mark := "◎"
+			if entry != nil {
+				mark = "◉"
+				if repoIsNewer(skill, target) {
+					mark = "▲"
+				}
 			}
 			found = append(found, [3]string{scope, platform, mark})
 		}
@@ -1284,7 +1318,7 @@ func collectInstalledSkills(args *cliArgs, cat *catalog, names []string, data *s
 				entry, hasEntry := recordedByName[name]
 				repoSkill, inRepo := repoSkills[name]
 				target := makeTarget(platform, scope, scopeProject, name)
-				newer := inRepo && repoIsNewer(repoSkill, target)
+				newer := hasEntry && inRepo && repoIsNewer(repoSkill, target)
 				var notes []string
 				if hasEntry {
 					if !onDiskSet[name] {
@@ -1307,10 +1341,11 @@ func collectInstalledSkills(args *cliArgs, cat *catalog, names []string, data *s
 					}
 				}
 				mark := "◎"
-				if newer {
-					mark = "▲"
-				} else if repoNames[name] || hasEntry {
+				if hasEntry {
 					mark = "◉"
+					if newer {
+						mark = "▲"
+					}
 				}
 				version := ""
 				if args.showVersion {

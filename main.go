@@ -71,6 +71,9 @@ Options:
   --version              With installed, append each tool's version.
   --raw                  With install or update, write MCP $NAME placeholders
                          instead of filling them from the environment.
+  -f, --force            install: replace a tool at the destination that was
+                         not installed by this command. uninstall: also remove
+                         copies that have no install record.
   -h, --help             Show this help.
 
 setup options:
@@ -138,6 +141,7 @@ type cliArgs struct {
 	showVersion bool
 	raw         bool
 	remove      bool
+	force       bool
 }
 
 func (a *cliArgs) with(names []string, all bool) *cliArgs {
@@ -155,6 +159,7 @@ var boolLong = map[string]func(*cliArgs){
 	"--version": func(a *cliArgs) { a.showVersion = true },
 	"--raw":     func(a *cliArgs) { a.raw = true },
 	"--remove":  func(a *cliArgs) { a.remove = true },
+	"--force":   func(a *cliArgs) { a.force = true },
 	"--help":    func(a *cliArgs) {},
 }
 var valueLong = map[string]func(*cliArgs, string){
@@ -166,6 +171,7 @@ var boolShort = map[byte]func(*cliArgs){
 	'l': func(a *cliArgs) { a.local = true },
 	'a': func(a *cliArgs) { a.all = true },
 	'n': func(a *cliArgs) { a.dryRun = true },
+	'f': func(a *cliArgs) { a.force = true },
 	'h': func(a *cliArgs) {},
 }
 var valueShort = map[byte]func(*cliArgs, string){
@@ -326,10 +332,45 @@ func validate(args *cliArgs) {
 	if args.raw && cmd != "install" && cmd != "update" {
 		die("--raw applies to install and update")
 	}
+	if args.force && cmd != "install" && cmd != "uninstall" {
+		die("--force applies to install and uninstall")
+	}
+}
+
+// probeForeign checks whether name has an unrecorded presence: a skill dir
+// or an MCP config entry under the selected scopes/platforms.
+func probeForeign(name string, args *cliArgs) (skill, mcp bool) {
+	scopes := selectedScopes(args, "global")
+	platformFilter := selectedPlatforms(args.platforms)
+	project := ""
+	if contains(scopes, "local") {
+		project = projectDir(args)
+	}
+	platforms := platformFilter
+	if platforms == nil {
+		platforms = platformOrder
+	}
+	for _, scope := range scopes {
+		p := ""
+		if scope == "local" {
+			p = project
+		}
+		for _, platform := range platforms {
+			skillsDir, _ := platformPaths(platform, scope, p)
+			if present(filepath.Join(skillsDir, name)) {
+				skill = true
+			}
+			if configHasServer(mcpConfigPath(platform, scope, p), name) {
+				mcp = true
+			}
+		}
+	}
+	return skill, mcp
 }
 
 // partitionTools splits names into skill and MCP names for a catalog.
-func partitionTools(names []string, cat *catalog, data *stateData, receipts bool) (skillNames, mcpNames []string) {
+func partitionTools(args *cliArgs, cat *catalog, data *stateData, receipts bool) (skillNames, mcpNames []string) {
+	names := args.names
 	repoSkills := map[string]bool{}
 	repoMcps := map[string]bool{}
 	if cat != nil {
@@ -368,6 +409,18 @@ func partitionTools(names []string, cat *catalog, data *stateData, receipts bool
 			skillNames = append(skillNames, name)
 		case inMcp:
 			mcpNames = append(mcpNames, name)
+		case args.force && args.command == "uninstall":
+			// foreign name: probe for an unrecorded presence
+			hasSkill, hasMcp := probeForeign(name, args)
+			if hasSkill {
+				skillNames = append(skillNames, name)
+			}
+			if hasMcp {
+				mcpNames = append(mcpNames, name)
+			}
+			if !hasSkill && !hasMcp {
+				fmt.Printf("%s is not installed\n", name)
+			}
 		default:
 			unknown = append(unknown, name)
 		}
@@ -886,7 +939,7 @@ func run(argv []string) (code int) {
 	case "install":
 		src := requireSource(args.repo)
 		cat := catalogFor(src)
-		skillNames, mcpNames := partitionTools(args.names, cat, data, false)
+		skillNames, mcpNames := partitionTools(args, cat, data, false)
 		if args.raw && !args.all && len(mcpNames) == 0 {
 			die("--raw applies to MCP servers")
 		}
@@ -916,7 +969,7 @@ func run(argv []string) (code int) {
 	case "installed":
 		cat := mergedCatalog(args.repo, data)
 		scopes, project := installedScopes(args)
-		skillNames, mcpNames := partitionTools(args.names, cat, data, receipts)
+		skillNames, mcpNames := partitionTools(args, cat, data, receipts)
 		var sections []struct {
 			Title  string
 			Groups []installedGroup
@@ -932,7 +985,7 @@ func run(argv []string) (code int) {
 		renderInstalled(sections, scopes, project)
 	case "uninstall":
 		cat := mergedCatalog(args.repo, data)
-		skillNames, mcpNames := partitionTools(args.names, cat, data, receipts)
+		skillNames, mcpNames := partitionTools(args, cat, data, receipts)
 		if args.all || len(skillNames) > 0 {
 			skillCmdUninstall(args.with(skillNames, args.all), cat, skillNames, data, args.all)
 		}
@@ -946,7 +999,7 @@ func run(argv []string) (code int) {
 		} else {
 			cat = mergedCatalog("", data)
 		}
-		skillNames, mcpNames := partitionTools(args.names, cat, data, receipts)
+		skillNames, mcpNames := partitionTools(args, cat, data, receipts)
 		changed := false
 		if len(skillNames) > 0 || (len(args.names) == 0 && len(cat.skills) > 0) {
 			changed = skillCmdUpdate(args.with(skillNames, len(args.names) == 0), cat, skillNames, data, len(args.names) == 0) || changed

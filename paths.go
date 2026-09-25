@@ -39,7 +39,7 @@ type Target struct {
 }
 
 func (t Target) projectKey() string {
-	if t.Project == "" {
+	if t.Project == "" || t.Scope != "local" {
 		return ""
 	}
 	return resolve(t.Project)

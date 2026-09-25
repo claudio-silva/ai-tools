@@ -122,15 +122,15 @@ MCP configs:
 | claude-code | `~/.claude.json` | `.mcp.json` |
 | devin | `~/.config/devin/mcp_config.json` | `.devin/mcp_config.json` |
 
-`$CODEX_HOME` defaults to `~/.codex`. Shipped binaries go to `~/bin` when it exists and is writable, else `~/.local/bin`. MCP payloads go to `~/.local/share/ai-tools/mcp/<name>/`.
+`$CODEX_HOME` defaults to `~/.codex`. Shipped binaries go to `~/bin` when it exists and is writable, else `~/.local/bin`. Multi-file MCP payloads (Python/JS trees, data files) go to the managed directory `~/.local/share/ai-tools/mcp/<name>/` — never into the user's bin directories — and `settings` reference it as `$SERVER_DIR`.
 
 ## Install semantics
 
 - `install` copies manifest files and records the install in `~/.local/state/ai-tools/installs.json` (including which source repository it came from).
 - A destination that already exists and wasn't installed by aitools is left alone — the install fails for that destination rather than overwriting foreign files.
 - Reinstalling replaces managed files and deletes files inside the skill directory that the manifest no longer lists.
-- `uninstall` deletes recorded paths and the manifest's `remove` paths, keeping paths still used by another recorded install. Deletions go to `~/.Trash` when possible, and are deleted permanently when it can't take them (e.g. a different volume).
-- An MCP entry in a platform config that aitools didn't record is left in place.
+- `uninstall` deletes recorded paths and the manifest's `remove` paths, keeping paths still used by another recorded install. Deletions go to `~/.Trash` when possible, and are deleted permanently when it can't take them (e.g. a different volume). Paths outside the platform tool directories are never removed, and a symlinked install aborts the operation.
+- An MCP entry in a platform config that aitools didn't record is left in place. `uninstall` removes the recorded binary/payload copies when no other install needs them; for a foreign entry it only removes the config key — never files it didn't write. `install --force`/`uninstall --force` override the foreign-entry guards.
 - `update` reinstalls tools whose repository copy is newer — comparing the repository files' modification times against the installed copies.
 
 ## Versions
@@ -165,6 +165,7 @@ aitools setup [--remove]
 | `-p`, `--platform NAME` | `cursor`, `codex`, `claude-code`, `devin` — repeat or comma-separate |
 | `-a`, `--all` | Every matching tool (install), every outdated install (update), every recorded install (uninstall) |
 | `-n`, `--dry-run` | Print planned changes without touching files |
+| `-f`, `--force` | `install`: replace a foreign tool occupying the destination. `uninstall`: also remove copies with no install record |
 | `--version` | With `installed`, append each tool's version |
 | `--raw` | With `install`/`update`, write `$NAME` placeholders instead of filling them |
 | `-h`, `--help` | Command and option summary |
