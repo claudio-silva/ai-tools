@@ -128,6 +128,9 @@ func display(path string) string {
 }
 
 // copyFile replicates shutil.copy2: data, mode, and modification time.
+// The destination is replaced via rename, never rewritten in place: macOS
+// kills executables whose contents change after creation ("Code Signature
+// Invalid" at exec), so the copy must produce a fresh inode.
 func copyFile(src, dst string) {
 	in, err := os.Open(src)
 	if err != nil {
@@ -138,19 +141,31 @@ func copyFile(src, dst string) {
 	if err != nil {
 		die("cannot stat %s: %v", display(src), err)
 	}
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, st.Mode())
+	tmp, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+".*")
 	if err != nil {
 		die("cannot write %s: %v", display(dst), err)
 	}
-	_, copyErr := out.ReadFrom(in)
-	closeErr := out.Close()
-	if copyErr != nil {
-		die("cannot copy to %s: %v", display(dst), copyErr)
+	tmpName := tmp.Name()
+	fail := func(err error) {
+		tmp.Close()
+		os.Remove(tmpName)
+		die("cannot copy to %s: %v", display(dst), err)
 	}
-	if closeErr != nil {
-		die("cannot write %s: %v", display(dst), closeErr)
+	if _, err := tmp.ReadFrom(in); err != nil {
+		fail(err)
 	}
-	os.Chtimes(dst, time.Now(), st.ModTime())
+	if err := tmp.Chmod(st.Mode()); err != nil {
+		fail(err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		die("cannot write %s: %v", display(dst), err)
+	}
+	os.Chtimes(tmpName, time.Now(), st.ModTime())
+	if err := os.Rename(tmpName, dst); err != nil {
+		os.Remove(tmpName)
+		die("cannot write %s: %v", display(dst), err)
+	}
 }
 
 func atomicWrite(path, text string) {
