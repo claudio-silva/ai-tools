@@ -298,7 +298,7 @@ func TestResolveSettingsFill(t *testing.T) {
 		},
 	}
 	t.Setenv("TESTKEY_XYZ", "sekret")
-	out := resolveSettings(server, "/usr/bin/testbin", "", false, false)
+	out := resolveSettings(server, "/usr/bin/testbin", "", false, false, nil)
 	if out["command"] != "/usr/bin/testbin" {
 		t.Errorf("command = %v", out["command"])
 	}
@@ -316,7 +316,7 @@ func TestResolveSettingsRaw(t *testing.T) {
 			"env":     map[string]any{"K": "$TESTKEY_MISSING"},
 		},
 	}
-	out := resolveSettings(server, "/bin/x", "", true, false)
+	out := resolveSettings(server, "/bin/x", "", true, false, nil)
 	env := out["env"].(map[string]any)
 	if env["K"] != "$TESTKEY_MISSING" {
 		t.Errorf("raw env.K = %v", env["K"])
@@ -331,10 +331,33 @@ func TestResolveSettingsServerDir(t *testing.T) {
 			"args":    []any{"$SERVER_DIR/server.py"},
 		},
 	}
-	out := resolveSettings(server, "", "/payload/dir", false, false)
+	out := resolveSettings(server, "", "/payload/dir", false, false, nil)
 	args := out["args"].([]any)
 	if args[0] != "/payload/dir/server.py" {
 		t.Errorf("args = %v", args)
+	}
+}
+
+func TestResolveSettingsReuse(t *testing.T) {
+	server := &McpServer{
+		Name: "test",
+		Settings: map[string]any{
+			"env": map[string]any{"K": "$TESTKEY_REUSE", "P": "$TESTKEY_LEFT"},
+		},
+	}
+	t.Setenv("TESTKEY_REUSE", "")
+	t.Setenv("TESTKEY_LEFT", "")
+	reuse := map[string]string{
+		"TESTKEY_REUSE": "stored-secret",
+		"TESTKEY_LEFT":  "$TESTKEY_LEFT",
+	}
+	out := resolveSettings(server, "", "", false, true, reuse)
+	env := out["env"].(map[string]any)
+	if env["K"] != "stored-secret" {
+		t.Errorf("env.K = %v", env["K"])
+	}
+	if env["P"] != "$TESTKEY_LEFT" {
+		t.Errorf("env.P = %v", env["P"])
 	}
 }
 
@@ -343,6 +366,17 @@ func TestResolveSettingsServerDir(t *testing.T) {
 func TestTomlString(t *testing.T) {
 	if got := tomlString(`a"b\c`); got != `"a\"b\\c"` {
 		t.Errorf("tomlString = %s", got)
+	}
+}
+
+func TestTomlEnv(t *testing.T) {
+	text := "[mcp_servers.imagen]\ncommand = \"/bin/imagen\"\n\n[mcp_servers.imagen.env]\nOPENAI_API_KEY = \"sk-live\"\nOTHER = \"x\"\n\n[mcp_servers.other]\ncommand = \"/y\"\n"
+	env := tomlEnv(text, "imagen")
+	if env["OPENAI_API_KEY"] != "sk-live" || env["OTHER"] != "x" {
+		t.Errorf("env = %v", env)
+	}
+	if got := tomlEnv(text, "other"); len(got) != 0 {
+		t.Errorf("other env = %v", got)
 	}
 }
 

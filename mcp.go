@@ -250,7 +250,7 @@ func replacePlaceholders(value any, mapping map[string]string) any {
 	return value
 }
 
-func resolveSettings(server *McpServer, commandPath, payloadDir string, raw, dryRun bool) map[string]any {
+func resolveSettings(server *McpServer, commandPath, payloadDir string, raw, dryRun bool, reuse map[string]string) map[string]any {
 	mapping := map[string]string{}
 	if commandPath != "" {
 		mapping["BINARY"] = resolve(commandPath)
@@ -264,7 +264,7 @@ func resolveSettings(server *McpServer, commandPath, payloadDir string, raw, dry
 			names = append(names, name)
 		}
 	}
-	var missing []string
+	var missing, reused []string
 	for _, name := range names {
 		if raw {
 			continue
@@ -273,7 +273,19 @@ func resolveSettings(server *McpServer, commandPath, payloadDir string, raw, dry
 			mapping[name] = value
 			continue
 		}
+		if value := reuse[name]; value != "" && !isPlaceholderValue(value, name) {
+			mapping[name] = value
+			reused = append(reused, "$"+name)
+			continue
+		}
 		missing = append(missing, name)
+	}
+	if len(reused) > 0 {
+		verb := "reusing"
+		if dryRun {
+			verb = "would reuse"
+		}
+		fmt.Printf("  %s %s\n", verb, strings.Join(reused, ", "))
 	}
 	if len(missing) > 0 && dryRun {
 		var refs []string
@@ -472,6 +484,62 @@ func configCommand(path, name string) string {
 	}
 	command, _ := entry["command"].(string)
 	return command
+}
+
+// isPlaceholderValue reports whether value is an unresolved $NAME or ${NAME}
+// placeholder rather than a filled-in secret.
+func isPlaceholderValue(value, name string) bool {
+	return value == "$"+name || value == "${"+name+"}"
+}
+
+// configEnv returns the env values recorded for name in config, or nil.
+func configEnv(path, name string) map[string]string {
+	if !exists(path) {
+		return nil
+	}
+	if strings.HasSuffix(path, ".toml") {
+		return tomlEnv(readFile(path), name)
+	}
+	entry, ok := jsonServers(path)[name].(map[string]any)
+	if !ok {
+		return nil
+	}
+	env, ok := entry["env"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := map[string]string{}
+	for key, value := range env {
+		if s, ok := value.(string); ok {
+			out[key] = s
+		}
+	}
+	return out
+}
+
+// tomlEnv returns the entries of [mcp_servers.<name>.env].
+func tomlEnv(text, name string) map[string]string {
+	header := "[mcp_servers." + name + ".env]"
+	kvRe := regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"((?:[^"\\]|\\.)*)"`)
+	out := map[string]string{}
+	inSection := false
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") {
+			inSection = line == header
+			continue
+		}
+		if inSection {
+			if m := kvRe.FindStringSubmatch(line); m != nil {
+				out[m[1]] = tomlUnescape(m[2])
+			}
+		}
+	}
+	return out
+}
+
+func tomlUnescape(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, `\"`, `"`), `\\`, `\`)
 }
 
 func writeJSONServer(path, name string, settings map[string]any) {
@@ -945,7 +1013,7 @@ func mcpCmdInstall(args *cliArgs, cat *catalog, names []string, data *stateData,
 		fmt.Println("dry-run: no files will be changed")
 	}
 	for _, j := range jobs {
-		settings := resolveSettings(j.server, j.dest, j.payload, raw, args.dryRun)
+		settings := resolveSettings(j.server, j.dest, j.payload, raw, args.dryRun, nil)
 		verb := "installed"
 		if args.dryRun {
 			verb = "would install"
@@ -1176,11 +1244,12 @@ func mcpCmdUpdate(args *cliArgs, cat *catalog, names []string, data *stateData, 
 	raw := args.raw
 
 	type outdatedJob struct {
-		server  *McpServer
-		target  Target
-		config  string
-		dest    string
-		payload string
+		server   *McpServer
+		target   Target
+		config   string
+		dest     string
+		payload  string
+		keysOnly bool
 	}
 	var outdated []outdatedJob
 	var current []struct {
@@ -1201,6 +1270,13 @@ func mcpCmdUpdate(args *cliArgs, cat *catalog, names []string, data *stateData, 
 		if len(server.Files) > 0 {
 			payload = serverDir(server.Name)
 		}
+		hasSecrets := false
+		for _, ph := range collectPlaceholders(server.Settings) {
+			if ph != "BINARY" && ph != "SERVER_DIR" {
+				hasSecrets = true
+				break
+			}
+		}
 		for _, scope := range scopes {
 			for _, platform := range platforms {
 				target := makeTarget(platform, scope, project, server.Name)
@@ -1214,7 +1290,11 @@ func mcpCmdUpdate(args *cliArgs, cat *catalog, names []string, data *stateData, 
 					// update never deletes foreign files either: config entries
 					// may be adopted, but an unrecorded binary/payload path aborts
 					guardForeignMcpDests(data, server.Binary, dest, payload, false)
-					outdated = append(outdated, outdatedJob{server, target, config, dest, payload})
+					outdated = append(outdated, outdatedJob{server, target, config, dest, payload, false})
+				} else if args.keys && hasSecrets {
+					// --keys: rewrite the config entry to re-resolve secrets
+					// even though nothing else about the install is outdated.
+					outdated = append(outdated, outdatedJob{server, target, config, dest, payload, true})
 				} else if len(names) > 0 {
 					current = append(current, struct {
 						server *McpServer
@@ -1247,9 +1327,24 @@ func mcpCmdUpdate(args *cliArgs, cat *catalog, names []string, data *stateData, 
 	}
 	settingsByName := map[string]map[string]any{}
 	for _, j := range outdated {
-		if settingsByName[j.server.Name] == nil {
-			settingsByName[j.server.Name] = resolveSettings(j.server, j.dest, j.payload, raw, args.dryRun)
+		if settingsByName[j.server.Name] != nil {
+			continue
 		}
+		// Keep secrets already recorded in the configs being rewritten so an
+		// update does not clobber them with placeholders.
+		reuse := map[string]string{}
+		for _, other := range outdated {
+			if other.server.Name != j.server.Name {
+				continue
+			}
+			for key, value := range configEnv(other.config, j.server.Name) {
+				cur, seen := reuse[key]
+				if !seen || isPlaceholderValue(cur, key) && !isPlaceholderValue(value, key) {
+					reuse[key] = value
+				}
+			}
+		}
+		settingsByName[j.server.Name] = resolveSettings(j.server, j.dest, j.payload, raw, args.dryRun, reuse)
 	}
 	copied := map[string]bool{}
 	messaged := map[string]bool{}
@@ -1258,7 +1353,21 @@ func mcpCmdUpdate(args *cliArgs, cat *catalog, names []string, data *stateData, 
 		if args.dryRun {
 			verb = "would update"
 		}
+		if j.keysOnly {
+			verb = "refreshed keys"
+			if args.dryRun {
+				verb = "would refresh keys"
+			}
+		}
 		fmt.Printf("  %s %s → %s (%s)\n", verb, j.server.Name, j.target.Platform, j.target.Scope)
+		if j.keysOnly {
+			// Binary, payload, and the install record stay untouched; only the
+			// config entry is rewritten with freshly resolved secrets.
+			if !args.dryRun {
+				writeServer(j.config, j.server.Name, settingsByName[j.server.Name])
+			}
+			continue
+		}
 		fmt.Printf("    remove %s %s\n", display(j.config), j.server.Name)
 		if !args.dryRun {
 			removeServer(j.config, j.server.Name)

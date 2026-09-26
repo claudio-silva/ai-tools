@@ -71,6 +71,8 @@ Options:
   --version              With installed, append each tool's version.
   --raw                  With install or update, write MCP $NAME placeholders
                          instead of filling them from the environment.
+  --keys                 With update, also re-resolve secrets and rewrite the
+                         config entries of installs that are not outdated.
   -f, --force            install: replace a tool at the destination that was
                          not installed by this command. uninstall: also remove
                          copies that have no install record.
@@ -142,6 +144,7 @@ type cliArgs struct {
 	raw         bool
 	remove      bool
 	force       bool
+	keys        bool
 }
 
 func (a *cliArgs) with(names []string, all bool) *cliArgs {
@@ -160,6 +163,7 @@ var boolLong = map[string]func(*cliArgs){
 	"--raw":     func(a *cliArgs) { a.raw = true },
 	"--remove":  func(a *cliArgs) { a.remove = true },
 	"--force":   func(a *cliArgs) { a.force = true },
+	"--keys":    func(a *cliArgs) { a.keys = true },
 	"--help":    func(a *cliArgs) {},
 }
 var valueLong = map[string]func(*cliArgs, string){
@@ -334,6 +338,9 @@ func validate(args *cliArgs) {
 	}
 	if args.force && cmd != "install" && cmd != "uninstall" {
 		die("--force applies to install and uninstall")
+	}
+	if args.keys && cmd != "update" {
+		die("--keys applies to update")
 	}
 }
 
