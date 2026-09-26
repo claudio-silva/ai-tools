@@ -295,9 +295,12 @@ func resolveSettings(server *McpServer, commandPath, payloadDir string, raw, dry
 	return replacePlaceholders(deepCopy(server.Settings), mapping).(map[string]any)
 }
 
+// isTTY reports whether f is a real terminal. A ModeCharDevice check is not
+// enough: /dev/null qualifies, which let non-interactive runs reach
+// hiddenPrompt, read EOF, and silently write placeholders.
 func isTTY(f *os.File) bool {
-	st, err := f.Stat()
-	return err == nil && st.Mode()&os.ModeCharDevice != 0
+	_, err := tcGetAttr(f.Fd())
+	return err == nil
 }
 
 func deepCopy(v any) any {
@@ -1243,6 +1246,11 @@ func mcpCmdUpdate(args *cliArgs, cat *catalog, names []string, data *stateData, 
 		fmt.Println("dry-run: no files will be changed")
 	}
 	settingsByName := map[string]map[string]any{}
+	for _, j := range outdated {
+		if settingsByName[j.server.Name] == nil {
+			settingsByName[j.server.Name] = resolveSettings(j.server, j.dest, j.payload, raw, args.dryRun)
+		}
+	}
 	copied := map[string]bool{}
 	messaged := map[string]bool{}
 	for _, j := range outdated {
@@ -1265,9 +1273,6 @@ func mcpCmdUpdate(args *cliArgs, cat *catalog, names []string, data *stateData, 
 				copyPayload(j.server, j.payload, args.dryRun, verb)
 			}
 			copied[j.server.Name] = true
-		}
-		if settingsByName[j.server.Name] == nil {
-			settingsByName[j.server.Name] = resolveSettings(j.server, j.dest, j.payload, raw, args.dryRun)
 		}
 		if !args.dryRun {
 			writeServer(j.config, j.server.Name, settingsByName[j.server.Name])
