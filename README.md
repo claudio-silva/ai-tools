@@ -26,7 +26,7 @@ Download the binary for your platform, then:
 ./aitools setup
 ```
 
-`setup` copies the binary to `~/bin` or `~/.local/bin` (whichever is on `PATH`). If you ran it from a cloned repository, it offers to remove the checkout; the installed binary is self-contained. `aitools setup --remove` undoes the install.
+`setup` copies the binary to `~/bin` or `~/.local/bin` (whichever is on `PATH`); run it again with a newer binary to update the installed copy. If you ran it from a cloned repository, it offers to remove the checkout; the installed binary is self-contained. `aitools setup --remove` undoes the install.
 
 ### From source
 
@@ -90,6 +90,7 @@ Remote sources must be public repositories (for now). A remote is downloaded onc
 | `pull [repo]` | Refresh the source snapshot (`git pull` or re-download) |
 | `cache` / `cache clear [repo]` | Inspect or drop cached remote snapshots |
 | `setup [--remove]` | Install or remove the `aitools` binary itself |
+| `version` / `--version` / `-v` | Print the aitools version |
 
 Scope and platform options: `-g`/`--global`, `-l`/`--local`, `-C`/`--directory`, `-p`/`--platform` (repeatable, or comma-separated), `-n`/`--dry-run`, `--version`, `--raw`. Full details: `aitools help`.
 
