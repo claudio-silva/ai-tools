@@ -836,7 +836,7 @@ func cmdSetup(remove bool) {
 	}
 	if old := olderCopy(links); old != "" {
 		copyFile(exe, old)
-		fmt.Printf("updated %s from %s\n", displayLink(old), display(exe))
+		fmt.Printf("updated %s (aitools %s)\n", displayLink(old), versionString())
 		warnIfShadowed(old)
 		return
 	}
@@ -881,7 +881,7 @@ func cmdSetup(remove bool) {
 		}
 		copyFile(exe, link)
 		os.Chmod(link, 0o755)
-		fmt.Printf("installed %s -> %s\n", displayLink(link), display(exe))
+		fmt.Printf("installed %s (aitools %s)\n", displayLink(link), versionString())
 		warnIfShadowed(link)
 		offerRepoRemoval(exe)
 		return

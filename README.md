@@ -10,30 +10,29 @@ The tool manager for AI coding agents.
 
 ## Install
 
-### npx (recommended)
-
 ```sh
-npx aitools help
+curl -fsSL https://raw.githubusercontent.com/claudio-silva/ai-tools/main/install.sh | sh
 ```
 
-The npm package ships the compiled binary; no downloads at run time.
+The script downloads the binary for your Mac from the [latest release](https://github.com/claudio-silva/ai-tools/releases/latest), checks it against the release's `checksums.txt`, and runs `aitools setup`, which copies it to `~/bin` or `~/.local/bin` (whichever is on `PATH`). Run the same line again to update. `AITOOLS_VERSION=0.2.0` before `sh` picks a specific release.
 
-### Release binary
+### Manually
 
-Download the binary for your platform, then:
+Download `aitools-darwin-arm64` (Apple silicon) or `aitools-darwin-amd64` (Intel) from the [releases page](https://github.com/claudio-silva/ai-tools/releases), then:
 
 ```sh
-./aitools setup
+chmod +x aitools-darwin-arm64
+./aitools-darwin-arm64 setup
 ```
 
-`setup` copies the binary to `~/bin` or `~/.local/bin` (whichever is on `PATH`); run it again with a newer binary to update the installed copy. If you ran it from a cloned repository, it offers to remove the checkout; the installed binary is self-contained. `aitools setup --remove` undoes the install.
+`setup` updates an older installed copy in place. If you run it from a cloned repository, it offers to remove the checkout; the installed binary is self-contained. `aitools setup --remove` undoes the install.
 
 ### From source
 
 ```sh
 git clone https://github.com/claudio-silva/ai-tools.git
 cd ai-tools
-go build -o aitools .
+make build
 ./aitools setup
 ```
 
