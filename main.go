@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -795,6 +796,20 @@ func cmdSetup(remove bool) {
 			return
 		}
 	}
+	// Links whose target is gone are dropped, and an older aitools copy is
+	// replaced in place, so running setup again also updates the install.
+	for _, link := range links {
+		if isSymlink(link) && !exists(link) {
+			os.Remove(link)
+			fmt.Printf("removed broken link %s\n", displayLink(link))
+		}
+	}
+	if old := olderCopy(links); old != "" {
+		copyFile(exe, old)
+		fmt.Printf("updated %s from %s\n", displayLink(old), display(exe))
+		warnIfShadowed(old)
+		return
+	}
 	var available []string
 	for _, dir := range setupDirs() {
 		if pathDirOnPath(dir) {
@@ -842,6 +857,32 @@ func cmdSetup(remove bool) {
 		return
 	}
 	die("could not install aitools: %s", strings.Join(skipped, "; "))
+}
+
+// olderCopy returns the aitools binary among links that setup should update:
+// the one PATH resolves first, else the first present. A regular file counts
+// only when it is an aitools build, so a foreign "aitools" is never replaced.
+func olderCopy(links []string) string {
+	isCopy := func(path string) bool {
+		if isSymlink(path) || !isFile(path) {
+			return false
+		}
+		data, err := os.ReadFile(path)
+		return err == nil && bytes.Contains(data, []byte("github.com/claudio-silva/ai-tools"))
+	}
+	if found, err := exec.LookPath("aitools"); err == nil {
+		for _, link := range links {
+			if found == link && isCopy(link) {
+				return link
+			}
+		}
+	}
+	for _, link := range links {
+		if isCopy(link) {
+			return link
+		}
+	}
+	return ""
 }
 
 func sameFileContent(a, b string) bool {
