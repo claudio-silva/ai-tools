@@ -45,22 +45,34 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+// fixtureRepo builds a one-skill repository; manifestJSON "" means no aitools.json.
 func fixtureRepo(t *testing.T, skillDir string, manifestJSON string, files map[string]string) (root string, skill Skill) {
 	t.Helper()
 	root = t.TempDir()
-	writeFile(t, filepath.Join(root, skillDir, "manifest.json"), manifestJSON)
+	if manifestJSON != "" {
+		writeFile(t, filepath.Join(root, skillDir, manifestName), manifestJSON)
+	}
 	writeFile(t, filepath.Join(root, skillDir, "SKILL.md"), "---\nname: test\ndescription: d\n---\nbody\n")
 	for rel, content := range files {
 		writeFile(t, filepath.Join(root, skillDir, rel), content)
 	}
-	skill = Skill{
-		Name:   "test",
-		Folder: "Shared",
-		Path:   filepath.Join(root, skillDir),
-		Root:   root,
-		Source: root,
+	skills, _ := discover(root, root)
+	if len(skills) != 1 {
+		t.Fatalf("discovered %d skills, want 1", len(skills))
 	}
-	return root, skill
+	return root, skills[0]
+}
+
+func skillDests(pairs []filePair, target Target) string {
+	var dests []string
+	for _, p := range pairs {
+		rel, _ := filepath.Rel(resolve(target.SkillDir), p.dest)
+		if rel != "" && !strings.HasPrefix(rel, "..") {
+			dests = append(dests, filepath.ToSlash(rel))
+		}
+	}
+	sortStrings(dests)
+	return strings.Join(dests, ",")
 }
 
 func testTarget(t *testing.T, project string) Target {
@@ -197,40 +209,42 @@ func TestParseArgsDashDash(t *testing.T) {
 // --- manifest expansion --------------------------------------------------------
 
 func TestExpandInstallBasic(t *testing.T) {
-	root, skill := fixtureRepo(t, "skills/Shared/test",
-		`{"install": ["SKILL.md", "agents", "extra.txt"]}`,
+	_, skill := fixtureRepo(t, "skills/test",
+		`{"exclude": ["notinstalled.txt", "drafts/"]}`,
 		map[string]string{
 			"agents/a.md":      "a",
 			"agents/sub/b.md":  "b",
 			"extra.txt":        "x",
 			"notinstalled.txt": "n",
+			"drafts/x.md":      "d",
 			"agents/.DS_Store": "junk",
+			".hidden":          "h",
 		})
 	target := testTarget(t, t.TempDir())
-	m := loadManifest(skill)
-	pairs := expandInstall(skill, m, target)
-	var dests []string
-	for _, p := range pairs {
-		rel, _ := filepath.Rel(resolve(target.SkillDir), p.dest)
-		if rel != "" && !strings.HasPrefix(rel, "..") {
-			dests = append(dests, rel)
-		}
-	}
-	sortStrings(dests)
-	got := strings.Join(dests, ",")
+	got := skillDests(expandInstall(skill, skill.Manifest, target), target)
 	want := "SKILL.md,agents/a.md,agents/sub/b.md,extra.txt"
 	if got != want {
 		t.Errorf("dests = %s, want %s", got, want)
 	}
-	_ = root
+}
+
+func TestExpandInstallNoManifest(t *testing.T) {
+	_, skill := fixtureRepo(t, "skills/test", "", map[string]string{"scripts/run.sh": "x"})
+	target := testTarget(t, t.TempDir())
+	if got := skillDests(expandInstall(skill, skill.Manifest, target), target); got != "SKILL.md,scripts/run.sh" {
+		t.Errorf("dests = %s", got)
+	}
+	if !reflect.DeepEqual(skill.Platforms, platformOrder) {
+		t.Errorf("platforms = %v, want all", skill.Platforms)
+	}
 }
 
 func TestExpandInstallFromTo(t *testing.T) {
 	target := testTarget(t, t.TempDir())
-	_, skill := fixtureRepo(t, "skills/Shared/test",
-		`{"install": ["SKILL.md", {"from": "te-agents/*.toml", "to": "$PLATFORM_HOME/agents/"}]}`,
+	_, skill := fixtureRepo(t, "skills/test",
+		`{"files": [{"from": "te-agents/*.toml", "to": "$PLATFORM_HOME/agents/"}]}`,
 		map[string]string{"te-agents/a.toml": "a", "te-agents/b.toml": "b"})
-	pairs := expandInstall(skill, loadManifest(skill), target)
+	pairs := expandInstall(skill, skill.Manifest, target)
 	destDir := filepath.Join(target.PlatformHome, "agents")
 	found := 0
 	for _, p := range pairs {
@@ -244,14 +258,158 @@ func TestExpandInstallFromTo(t *testing.T) {
 	if found != 2 {
 		t.Errorf("matched %d toml files, want 2", found)
 	}
+	if got := skillDests(pairs, target); got != "SKILL.md" {
+		t.Errorf("placed sources also copied into the skill dir: %s", got)
+	}
+}
+
+func TestExpandInstallPlatformEntry(t *testing.T) {
+	_, skill := fixtureRepo(t, "skills/test",
+		`{"files": [{"from": "agents/openai.yaml", "platforms": ["codex"]}]}`,
+		map[string]string{"agents/openai.yaml": "y"})
+	cursor := testTarget(t, t.TempDir())
+	if got := skillDests(expandInstall(skill, skill.Manifest, cursor), cursor); got != "SKILL.md" {
+		t.Errorf("cursor dests = %s", got)
+	}
+	codex := testTarget(t, t.TempDir())
+	codex.Platform = "codex"
+	if got := skillDests(expandInstall(skill, skill.Manifest, codex), codex); got != "SKILL.md,agents/openai.yaml" {
+		t.Errorf("codex dests = %s", got)
+	}
 }
 
 func TestExpandInstallRequiresSkillMD(t *testing.T) {
 	target := testTarget(t, t.TempDir())
-	_, skill := fixtureRepo(t, "skills/Shared/test",
-		`{"install": ["other.txt"]}`,
+	_, skill := fixtureRepo(t, "skills/test",
+		`{"exclude": ["SKILL.md"]}`,
 		map[string]string{"other.txt": "x"})
-	mustDie(t, func() { expandInstall(skill, loadManifest(skill), target) })
+	mustDie(t, func() { expandInstall(skill, skill.Manifest, target) })
+}
+
+func TestSkillManifestRejects(t *testing.T) {
+	for _, bad := range []string{
+		`{"install": ["SKILL.md"]}`,
+		`{"files": ["SKILL.md"]}`,
+		`{"platforms": ["vim"]}`,
+		`{"platforms": []}`,
+		`{"exclude": ["../x"]}`,
+		`{"platforms": ["cursor"], "files": [{"from": "a", "platforms": ["codex"]}]}`,
+	} {
+		root := t.TempDir()
+		writeFile(t, filepath.Join(root, "skills", "s", "SKILL.md"), "---\nname: s\ndescription: d\n---\n")
+		writeFile(t, filepath.Join(root, "skills", "s", manifestName), bad)
+		mustDie(t, func() { discover(root, root) })
+	}
+}
+
+// --- discovery -------------------------------------------------------------------
+
+func skillMD(name string) string {
+	return "---\nname: " + name + "\ndescription: d\n---\nbody\n"
+}
+
+func skillNames(skills []Skill) string {
+	var names []string
+	for _, s := range skills {
+		names = append(names, s.Name)
+	}
+	sortStrings(names)
+	return strings.Join(names, ",")
+}
+
+func TestDiscoverFreeForm(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "skills", "a", "SKILL.md"), skillMD("a"))
+	writeFile(t, filepath.Join(root, "skills", "group", "b", "SKILL.md"), skillMD("b"))
+	writeFile(t, filepath.Join(root, "skills", "group", "b", "nested", "SKILL.md"), skillMD("shadowed"))
+	writeFile(t, filepath.Join(root, "skills", "x", "y", "z", "deep", "SKILL.md"), skillMD("too-deep"))
+	writeFile(t, filepath.Join(root, ".claude", "skills", "c", "SKILL.md"), skillMD("c"))
+	writeFile(t, filepath.Join(root, "skills", "bad", "SKILL.md"), "---\nname: bad\n---\n")
+	writeFile(t, filepath.Join(root, "elsewhere", "e", "SKILL.md"), skillMD("e"))
+	writeFile(t, filepath.Join(root, "servers", "srv", manifestName), `{"settings": {"command": "srv"}}`)
+	writeFile(t, filepath.Join(root, manifestName), `{
+		"skills": {"b": {"platforms": ["codex"]}},
+		"mcp": {"ext": {"platforms": ["cursor"], "settings": {"command": "npx"}}}
+	}`)
+	skills, mcps := discover(root, root)
+	if got := skillNames(skills); got != "a,b,c" {
+		t.Errorf("skills = %s, want a,b,c", got)
+	}
+	for _, s := range skills {
+		if s.Name == "b" && !reflect.DeepEqual(s.Platforms, []string{"codex"}) {
+			t.Errorf("b platforms = %v", s.Platforms)
+		}
+	}
+	var mcpNames []string
+	for _, m := range mcps {
+		mcpNames = append(mcpNames, m.Name+":"+strings.Join(m.Platforms, "+"))
+	}
+	sortStrings(mcpNames)
+	if got := strings.Join(mcpNames, ","); got != "ext:cursor,srv:cursor+codex+claude-code+devin" {
+		t.Errorf("mcps = %s", got)
+	}
+}
+
+func TestDiscoverRootExclude(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "skills", "a", "SKILL.md"), skillMD("a"))
+	writeFile(t, filepath.Join(root, "skills", "a", "README.md"), "r")
+	writeFile(t, filepath.Join(root, "skills", "a", "tests", "t.py"), "t")
+	writeFile(t, filepath.Join(root, "skills", "a", "run.py"), "x")
+	writeFile(t, filepath.Join(root, "skills", "a", manifestName), `{"exclude": ["tests"]}`)
+	writeFile(t, filepath.Join(root, manifestName), `{"exclude": ["README.md"]}`)
+	skills, _ := discover(root, root)
+	target := testTarget(t, t.TempDir())
+	if got := skillDests(expandInstall(skills[0], skills[0].Manifest, target), target); got != "SKILL.md,run.py" {
+		t.Errorf("dests = %s", got)
+	}
+}
+
+func TestDiscoverFallbackAndRoot(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "tools", "deep", "er", "x", "SKILL.md"), skillMD("x"))
+	writeFile(t, filepath.Join(root, "node_modules", "y", "SKILL.md"), skillMD("y"))
+	if skills, _ := discover(root, root); skillNames(skills) != "x" {
+		t.Errorf("fallback skills = %s", skillNames(skills))
+	}
+	single := t.TempDir()
+	writeFile(t, filepath.Join(single, "SKILL.md"), skillMD("solo"))
+	writeFile(t, filepath.Join(single, "skills", "other", "SKILL.md"), skillMD("other"))
+	if skills, _ := discover(single, single); skillNames(skills) != "solo" {
+		t.Errorf("root skill = %s", skillNames(skills))
+	}
+}
+
+func TestDiscoverRejects(t *testing.T) {
+	cases := map[string]map[string]string{
+		"twice described": {
+			"skills/a/SKILL.md": skillMD("a"), "skills/a/" + manifestName: `{}`,
+			manifestName: `{"skills": {"a": {}}}`,
+		},
+		"unknown root skill":   {"skills/a/SKILL.md": skillMD("a"), manifestName: `{"skills": {"nope": {}}}`},
+		"duplicate name":       {"skills/a/SKILL.md": skillMD("a"), "skills/g/a/SKILL.md": skillMD("a")},
+		"unknown root key":     {"skills/a/SKILL.md": skillMD("a"), manifestName: `{"tools": {}}`},
+		"mcp without settings": {"srv/" + manifestName: `{"platforms": ["cursor"]}`},
+	}
+	for name, files := range cases {
+		root := t.TempDir()
+		for rel, content := range files {
+			writeFile(t, filepath.Join(root, rel), content)
+		}
+		t.Run(name, func(t *testing.T) { mustDie(t, func() { discover(root, root) }) })
+	}
+}
+
+func TestFrontmatterProblem(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SKILL.md")
+	writeFile(t, path, "---\nname: x\ndescription: Drive a browser: open, click\n---\n")
+	if frontmatterProblem(path) == "" {
+		t.Error("unquoted ': ' not flagged")
+	}
+	writeFile(t, path, "---\nname: x\ndescription: \"Drive a browser: open\"\nmetadata:\n  a: b: c\n---\n")
+	if p := frontmatterProblem(path); p != "" {
+		t.Errorf("quoted value flagged: %s", p)
+	}
 }
 
 func TestExpandVars(t *testing.T) {
@@ -657,7 +815,7 @@ func TestKeyIgnoresStaleProjectOnGlobal(t *testing.T) {
 func TestPlanInstallForceForeignDir(t *testing.T) {
 	project := t.TempDir()
 	target := testTarget(t, project)
-	_, skill := fixtureRepo(t, "Shared/test", `{"install": ["SKILL.md"]}`, nil)
+	_, skill := fixtureRepo(t, "skills/test", "", nil)
 	if err := os.MkdirAll(target.SkillDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -684,7 +842,7 @@ func TestPlanInstallSymlinkAborts(t *testing.T) {
 	if err := os.Symlink(real, target.SkillDir); err != nil {
 		t.Fatal(err)
 	}
-	_, skill := fixtureRepo(t, "Shared/test", `{"install": ["SKILL.md"]}`, nil)
+	_, skill := fixtureRepo(t, "skills/test", "", nil)
 	mustDie(t, func() { planInstall(skill, target, &stateData{}, nil, false, true) })
 }
 

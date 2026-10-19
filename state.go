@@ -10,7 +10,6 @@ type installEntry struct {
 	Kind          string   `json:"kind,omitempty"`
 	Skill         string   `json:"skill,omitempty"`
 	Name          string   `json:"name,omitempty"`
-	Folder        string   `json:"folder,omitempty"`
 	Platform      string   `json:"platform"`
 	Scope         string   `json:"scope"`
 	Project       string   `json:"project"`
@@ -150,7 +149,6 @@ func recordSkillInstall(data *stateData, plan *Plan) {
 	data.Installs = append(kept, installEntry{
 		Kind:          "skill",
 		Skill:         plan.Skill.Name,
-		Folder:        plan.Skill.Folder,
 		Platform:      plan.Target.Platform,
 		Scope:         plan.Target.Scope,
 		Project:       plan.Target.projectKey(),

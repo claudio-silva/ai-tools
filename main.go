@@ -127,7 +127,7 @@ Examples:
   aitools setup
   aitools setup --remove
 
-The repository layout and manifest format are specified at ABOUT_URL
+The repository format (discovery and aitools.json) is specified at ABOUT_URL
 `
 
 type cliArgs struct {
@@ -709,7 +709,7 @@ func colorizeHelp(text string) string {
 			out.WriteString(m[1] + st(prog, m[2]) + m[3] + nl)
 			continue
 		}
-		const aboutPrefix = "The repository layout and manifest format are specified at "
+		const aboutPrefix = "The repository format (discovery and aitools.json) is specified at "
 		if strings.HasPrefix(body, aboutPrefix) {
 			path := strings.TrimSuffix(strings.TrimPrefix(body, aboutPrefix), ".")
 			period := ""

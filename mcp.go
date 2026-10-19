@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,127 +13,16 @@ import (
 var placeholderRe = regexp.MustCompile(`\$([A-Za-z_][A-Za-z0-9_]*)`)
 
 type McpServer struct {
-	Name      string
-	Path      string
-	Platforms []string
-	Settings  map[string]any
-	Message   string
-	Binary    string // source binary path, "" when the server ships none
-	Files     []manifestEntry
-	Root      string // source repo root (local dir or cache snapshot)
-	Source    string // normalized source URL/path this server came from
-}
-
-func discoverMcps(root, srcURL string) []*McpServer {
-	mcpRoot := filepath.Join(root, "mcp")
-	if !isDir(mcpRoot) {
-		return nil
-	}
-	var found []*McpServer
-	names := map[string]bool{}
-	folders, _ := os.ReadDir(mcpRoot)
-	for _, folder := range folders {
-		if !folder.IsDir() || strings.HasPrefix(folder.Name(), ".") {
-			continue
-		}
-		dir := filepath.Join(mcpRoot, folder.Name())
-		manifestPath := filepath.Join(dir, "manifest.json")
-		if !isFile(manifestPath) {
-			die("%s is missing manifest.json", relIn(root, dir))
-		}
-		server := loadMcpManifest(root, srcURL, dir, manifestPath)
-		if names[server.Name] {
-			die("duplicate MCP name %s", server.Name)
-		}
-		names[server.Name] = true
-		found = append(found, server)
-	}
-	return found
-}
-
-func loadMcpManifest(root, srcURL, dir, path string) *McpServer {
-	rel := relIn(root, path)
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		die("%s: %v", rel, err)
-	}
-	var data map[string]any
-	if err := json.Unmarshal(raw, &data); err != nil {
-		die("%s: %v", rel, err)
-	}
-	for key := range data {
-		if key != "platforms" && key != "settings" && key != "message" && key != "files" {
-			die("%s: unknown keys: %s", rel, key)
-		}
-	}
-	var platforms []string
-	for _, item := range toSlice(data["platforms"], rel, "platforms") {
-		name, ok := item.(string)
-		if !ok {
-			die("%s: platforms must be a non-empty list of names", rel)
-		}
-		platforms = append(platforms, name)
-	}
-	if len(platforms) == 0 {
-		die("%s: platforms must be a non-empty list of names", rel)
-	}
-	for _, name := range platforms {
-		if !contains(platformOrder, name) {
-			die("%s: unknown platform %s", rel, name)
-		}
-	}
-	settings, ok := data["settings"].(map[string]any)
-	if !ok || len(settings) == 0 {
-		die("%s: settings must be a non-empty object", rel)
-	}
-	message, _ := data["message"].(string)
-	if strings.TrimSpace(message) == "" {
-		die("%s: message must be a non-empty string", rel)
-	}
-	name := filepath.Base(dir)
-	binary := filepath.Join(dir, "bin", name)
-	hasBinary := isFile(binary)
-	if !hasBinary {
-		binary = ""
-	}
-	var files []manifestEntry
-	for _, item := range toSlice(data["files"], rel, "files") {
-		switch v := item.(type) {
-		case string:
-			if v == "" {
-				die("%s: empty files path", rel)
-			}
-			files = append(files, manifestEntry{from: v})
-		case map[string]any:
-			from, ok1 := v["from"].(string)
-			to, ok2 := v["to"].(string)
-			if len(v) != 2 || !ok1 || !ok2 || from == "" || to == "" {
-				die("%s: files objects need string from and to", rel)
-			}
-			files = append(files, manifestEntry{from: from, to: to})
-		default:
-			die("%s: files entries must be strings or objects", rel)
-		}
-	}
-	for _, ph := range collectPlaceholders(settings) {
-		if ph == "BINARY" && !hasBinary {
-			die("%s: settings use $BINARY but bin/%s is missing", rel, name)
-		}
-		if ph == "SERVER_DIR" && len(files) == 0 {
-			die("%s: settings use $SERVER_DIR but no files are shipped", rel)
-		}
-	}
-	return &McpServer{
-		Name:      name,
-		Path:      dir,
-		Platforms: platforms,
-		Settings:  settings,
-		Message:   strings.TrimSpace(message),
-		Binary:    binary,
-		Files:     files,
-		Root:      root,
-		Source:    srcURL,
-	}
+	Name         string
+	Path         string
+	Platforms    []string
+	Settings     map[string]any
+	Message      string
+	Binary       string // source binary path, "" when the server ships none
+	Files        []manifestEntry
+	ManifestFile string // aitools.json describing the server
+	Root         string // source repo root (local dir or cache snapshot)
+	Source       string // normalized source URL/path this server came from
 }
 
 func toSlice(v any, rel, key string) []any {
@@ -926,6 +814,9 @@ func resolveMcpRequested(servers []*McpServer, names []string, data *stateData) 
 }
 
 func printMessage(server *McpServer) {
+	if server.Message == "" {
+		return
+	}
 	fmt.Println()
 	for _, line := range wrapText(server.Message, 76) {
 		fmt.Println(line)
@@ -1446,7 +1337,7 @@ func mcpRepoMtime(server *McpServer) time.Time {
 		consider(p.src)
 	}
 	if latest.IsZero() {
-		consider(filepath.Join(server.Path, "manifest.json"))
+		consider(server.ManifestFile)
 	}
 	return latest
 }

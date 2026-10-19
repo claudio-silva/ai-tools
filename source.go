@@ -355,12 +355,6 @@ func readSnapshotMeta(dir string) sourceMeta {
 	return meta
 }
 
-func validateRepoDir(root, label string) {
-	if !isDir(filepath.Join(root, "skills")) && !isDir(filepath.Join(root, "mcp")) {
-		die("%s is not an aitools repository (no skills/ or mcp/ directory)", label)
-	}
-}
-
 // --- config-backed default source -----------------------------------------
 
 func defaultSource() *Source {
@@ -414,8 +408,7 @@ func cmdUse(args *cliArgs) {
 	if src.Kind == "remote" {
 		fetchSnapshot(src)
 	}
-	root := src.root()
-	validateRepoDir(root, src.URL)
+	catalogFor(src)
 	cfg := loadConfig()
 	cfg.Source = src.URL
 	saveConfig(cfg)

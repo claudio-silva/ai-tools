@@ -2,7 +2,7 @@
 
 The tool manager for AI coding agents.
 
-`aitools` installs, updates, and uninstalls **skills** and **MCP servers** for Cursor, Codex, Claude Code, and Devin; from any repository that follows the [prescribed layout](ABOUT.md). Think npm, but for agent tools: every conforming repo is a registry. No central index, no accounts, no permission needed; publish a repo, and anyone can install your tools with one command.
+`aitools` installs, updates, and uninstalls **skills** and **MCP servers** for Cursor, Codex, Claude Code, and Devin from any repository that holds them, in any layout ([format](ABOUT.md)). Think npm, but for agent tools: every repo is a registry. No central index, no accounts, no permission needed; publish a repo, and anyone can install your tools with one command.
 
 - Any `owner/repo` on GitHub, GitLab, or Bitbucket (or a local directory) is a tool source.
 - Installs are recorded, so `update` and `uninstall` know exactly what they own.
@@ -40,7 +40,7 @@ go build -o aitools .
 ## Quick start
 
 ```sh
-# pick a default source; any repo with the layout
+# pick a default source; any repo with skills or MCP servers
 aitools use @gh/claudio-silva/ai-toolbox
 
 # see what it offers
@@ -97,10 +97,10 @@ Scope and platform options: `-g`/`--global`, `-l`/`--local`, `-C`/`--directory`,
 
 Two kinds today; hooks, plugins, and other agent artifacts are planned:
 
-- **Skills**: `skills/<Platform>/<name>/` with `SKILL.md` and `manifest.json`. Files are copied into the platform's skills directory; `{from, to}` manifest entries can place files anywhere the platform's config allows (e.g. Codex agent TOMLs in `$CODEX_HOME/agents`).
-- **MCP servers**: `mcp/<name>/` with `manifest.json`. A shipped `bin/<name>` binary is copied to `~/bin`; script servers (Python, Node, …) ship a payload under a managed directory exposed as `$SERVER_DIR`; settings-only manifests can launch external commands like `npx` or `uvx`. The `settings` block is written into each platform's MCP config.
+- **Skills**: any directory with a `SKILL.md`, found the same way `npx skills add` finds them, so one repository serves both tools. The whole directory is installed to every platform by default. An optional `aitools.json` limits platforms, leaves files out, or places files anywhere the platform's config allows (e.g. Codex agent TOMLs in `$CODEX_HOME/agents`).
+- **MCP servers**: any directory with an `aitools.json` holding `settings`, or an entry in the root `aitools.json`. A shipped `bin/<name>` binary is copied to `~/bin`; script servers (Python, Node, …) ship a payload under a managed directory exposed as `$SERVER_DIR`; settings-only servers can launch external commands like `npx` or `uvx`. The `settings` block is written into each platform's MCP config.
 
-Tool authors: the layout, manifests, variables, and safety rules are specified in [ABOUT.md](ABOUT.md). A ready-made example lives at [claudio-silva/ai-toolbox](https://github.com/claudio-silva/ai-toolbox).
+Tool authors: discovery, `aitools.json`, variables, and safety rules are specified in [ABOUT.md](ABOUT.md). A ready-made example lives at [claudio-silva/ai-toolbox](https://github.com/claudio-silva/ai-toolbox).
 
 ## Install locations
 

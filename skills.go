@@ -1,9 +1,9 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -27,13 +27,11 @@ func catalogFor(src *Source) *catalog {
 		return cat
 	}
 	root := src.root()
-	validateRepoDir(root, src.URL)
-	cat := &catalog{
-		src:    src,
-		root:   root,
-		skills: discoverSkills(root, src.URL),
-		mcps:   discoverMcps(root, src.URL),
+	skills, mcps := discover(root, src.URL)
+	if len(skills) == 0 && len(mcps) == 0 {
+		die("%s has no tools: no SKILL.md skills and no MCP servers (aitools.json)", src.URL)
 	}
+	cat := &catalog{src: src, root: root, skills: skills, mcps: mcps}
 	catalogs[src.URL] = cat
 	return cat
 }
@@ -47,109 +45,17 @@ func relIn(root, path string) string {
 }
 
 type manifestEntry struct {
-	from, to string // to == "" for plain string entries
+	from, to  string   // to == "" for plain MCP paths, or a skill's default placement
+	platforms []string // skill files only; nil = every platform the skill supports
 }
 
+// manifest is a skill's optional aitools.json. Without one, the skill
+// directory is copied whole to every platform.
 type manifest struct {
-	install []manifestEntry
-	remove  []string
-}
-
-func loadManifest(skill Skill) manifest {
-	root := skill.Root
-	path := filepath.Join(skill.Path, "manifest.json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		die("%s: %v", relIn(root, path), err)
-	}
-	var data map[string]any
-	if err := json.Unmarshal(raw, &data); err != nil {
-		die("%s: %v", relIn(root, path), err)
-	}
-	rel := relIn(root, path)
-	for key := range data {
-		if key != "install" && key != "remove" {
-			die("%s: unknown keys: %s", rel, key)
-		}
-	}
-	installRaw, _ := data["install"].([]any)
-	if len(installRaw) == 0 {
-		die("%s: install must be a non-empty list", rel)
-	}
-	m := manifest{}
-	for _, item := range installRaw {
-		switch v := item.(type) {
-		case string:
-			if v == "" {
-				die("%s: empty install path", rel)
-			}
-			m.install = append(m.install, manifestEntry{from: v})
-		case map[string]any:
-			from, ok1 := v["from"].(string)
-			to, ok2 := v["to"].(string)
-			if len(v) != 2 || !ok1 || !ok2 {
-				die("%s: install objects need string from and to", rel)
-			}
-			if from == "" || to == "" {
-				die("%s: empty from or to", rel)
-			}
-			m.install = append(m.install, manifestEntry{from: from, to: to})
-		default:
-			die("%s: install entries must be strings or objects", rel)
-		}
-	}
-	removeRaw, _ := data["remove"].([]any)
-	for _, item := range removeRaw {
-		s, ok := item.(string)
-		if !ok {
-			die("%s: remove must be a list of paths", rel)
-		}
-		m.remove = append(m.remove, s)
-	}
-	return m
-}
-
-func discoverSkills(root, srcURL string) []Skill {
-	skillsRoot := filepath.Join(root, "skills")
-	if !isDir(skillsRoot) {
-		return nil
-	}
-	var found []Skill
-	names := map[string]string{}
-	folders, _ := os.ReadDir(skillsRoot)
-	for _, folder := range folders {
-		if !folder.IsDir() || strings.HasPrefix(folder.Name(), ".") {
-			continue
-		}
-		platforms, ok := folderPlatforms[folder.Name()]
-		if !ok {
-			known := strings.Join(sortedKeys(folderPlatforms), ", ")
-			die("unknown platform folder skills/%s; expected one of: %s", folder.Name(), known)
-		}
-		folderPath := filepath.Join(skillsRoot, folder.Name())
-		skillDirs, _ := os.ReadDir(folderPath)
-		for _, sd := range skillDirs {
-			if !sd.IsDir() || strings.HasPrefix(sd.Name(), ".") {
-				continue
-			}
-			skillDir := filepath.Join(folderPath, sd.Name())
-			if !isFile(filepath.Join(skillDir, "SKILL.md")) {
-				die("%s is missing SKILL.md", relIn(root, skillDir))
-			}
-			if !isFile(filepath.Join(skillDir, "manifest.json")) {
-				die("%s is missing manifest.json", relIn(root, skillDir))
-			}
-			if prev, dup := names[sd.Name()]; dup {
-				die("duplicate skill name %s: %s and %s", sd.Name(), relIn(root, prev), relIn(root, skillDir))
-			}
-			names[sd.Name()] = skillDir
-			found = append(found, Skill{
-				Name: sd.Name(), Folder: folder.Name(), Path: skillDir,
-				Platforms: platforms, Root: root, Source: srcURL,
-			})
-		}
-	}
-	return found
+	platforms []string // nil = every platform
+	exclude   []string
+	install   []manifestEntry
+	remove    []string
 }
 
 func variablesFor(target Target) map[string]string {
@@ -352,11 +258,101 @@ func hasGlobChars(path string) bool {
 
 type filePair struct{ src, dest string }
 
+// entryTo is a files entry's destination; without "to" the source keeps its
+// relative path inside the destination skill directory.
+func entryTo(entry manifestEntry) string {
+	if entry.to != "" {
+		return entry.to
+	}
+	if hasGlobChars(entry.from) {
+		dir := path.Dir(entry.from)
+		if dir == "." {
+			return "$SKILL_DIR/"
+		}
+		return "$SKILL_DIR/" + dir + "/"
+	}
+	return "$SKILL_DIR/" + entry.from
+}
+
+// entrySources resolves a files entry's source: the matched files of a glob,
+// the files under a directory, or the single file.
+func entrySources(skill Skill, entry manifestEntry) (kind string, src string, files []string) {
+	if hasGlobChars(entry.from) {
+		sourceOK(skill.Name, entry.from, true)
+		matches, _ := filepath.Glob(filepath.Join(skill.Path, entry.from))
+		for _, match := range matches {
+			if isFile(match) {
+				rel, _ := filepath.Rel(skill.Path, match)
+				if !ignoredFile(rel) {
+					files = append(files, match)
+				}
+			}
+		}
+		if len(files) == 0 {
+			die("%s: no files matched %s", skill.Name, entry.from)
+		}
+		sort.Strings(files)
+		return "glob", "", files
+	}
+	sourceOK(skill.Name, entry.from, false)
+	src = filepath.Join(skill.Path, entry.from)
+	if !exists(src) {
+		die("%s: missing %s", skill.Name, entry.from)
+	}
+	if isDir(src) {
+		return "dir", src, filesUnder(skill.Name, skill.Path, src)
+	}
+	return "file", src, []string{src}
+}
+
+func excluded(rel string, patterns []string) bool {
+	for _, pattern := range patterns {
+		p := strings.TrimSuffix(pattern, "/")
+		for c := rel; c != "." && c != "/"; c = path.Dir(c) {
+			if ok, _ := path.Match(p, c); ok || c == p {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// defaultFiles lists the files copied as-is into the skill directory: all of
+// it except junk, aitools.json, exclude matches, and files entries' sources.
+func defaultFiles(skill Skill, m manifest) []string {
+	placed := map[string]bool{}
+	for _, entry := range m.install {
+		_, _, files := entrySources(skill, entry)
+		for _, f := range files {
+			placed[f] = true
+		}
+	}
+	var out []string
+	filepath.WalkDir(skill.Path, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if p != skill.Path && (skipDirNames[d.Name()] || strings.HasPrefix(d.Name(), ".")) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, _ := filepath.Rel(skill.Path, p)
+		rel = filepath.ToSlash(rel)
+		if ignoredFile(rel) || rel == manifestName || placed[p] || excluded(rel, m.exclude) || !d.Type().IsRegular() {
+			return nil
+		}
+		out = append(out, p)
+		return nil
+	})
+	return out
+}
+
 func expandInstall(skill Skill, m manifest, target Target) []filePair {
 	vars := variablesFor(target)
 	var pairs []filePair
 	seen := map[string]string{}
-	where := skill.Folder + "/" + skill.Name
 
 	add := func(src, dest string) {
 		resolvedSrc := resolve(src)
@@ -371,71 +367,43 @@ func expandInstall(skill Skill, m manifest, target Target) []filePair {
 		pairs = append(pairs, filePair{resolvedSrc, resolvedDest})
 	}
 
+	for _, file := range defaultFiles(skill, m) {
+		rel, _ := filepath.Rel(skill.Path, file)
+		add(file, filepath.Join(target.SkillDir, rel))
+	}
 	for _, entry := range m.install {
-		if entry.to == "" {
-			sourceOK(skill.Name, entry.from, false)
-			src := filepath.Join(skill.Path, entry.from)
-			if !exists(src) {
-				die("%s: missing %s", skill.Name, entry.from)
-			}
-			for _, file := range filesUnder(skill.Name, skill.Path, src) {
-				rel, _ := filepath.Rel(skill.Path, file)
-				add(file, filepath.Join(target.SkillDir, rel))
-			}
+		if entry.platforms != nil && !contains(entry.platforms, target.Platform) {
 			continue
 		}
-		destText := expandVars(entry.to, vars, where+" to")
-		if hasGlobChars(entry.from) {
-			sourceOK(skill.Name, entry.from, true)
-			matches, _ := filepath.Glob(filepath.Join(skill.Path, entry.from))
-			var files []string
-			for _, match := range matches {
-				if isFile(match) {
-					rel, _ := filepath.Rel(skill.Path, match)
-					if !ignoredFile(rel) {
-						files = append(files, match)
-					}
-				}
-			}
-			if len(files) == 0 {
-				die("%s: no files matched %s", skill.Name, entry.from)
-			}
-			sort.Strings(files)
+		kind, src, files := entrySources(skill, entry)
+		destText := expandVars(entryTo(entry), vars, skill.Name+" to")
+		switch kind {
+		case "glob":
 			for _, file := range files {
 				add(file, filepath.Join(destText, filepath.Base(file)))
 			}
-			continue
-		}
-		sourceOK(skill.Name, entry.from, false)
-		src := filepath.Join(skill.Path, entry.from)
-		if !exists(src) {
-			die("%s: missing %s", skill.Name, entry.from)
-		}
-		if isDir(src) {
-			for _, file := range filesUnder(skill.Name, skill.Path, src) {
+		case "dir":
+			for _, file := range files {
 				rel, _ := filepath.Rel(src, file)
 				add(file, filepath.Join(destText, rel))
 			}
-			continue
+		default:
+			dest := destText
+			if strings.HasSuffix(destText, "/") || isDir(destText) {
+				dest = filepath.Join(destText, filepath.Base(src))
+			}
+			add(src, dest)
 		}
-		dest := destText
-		if strings.HasSuffix(destText, "/") || isDir(destText) {
-			dest = filepath.Join(destText, filepath.Base(src))
-		}
-		add(src, dest)
 	}
 
 	skillMD := filepath.Join(resolve(target.SkillDir), "SKILL.md")
-	ok := false
 	for _, p := range pairs {
 		if p.dest == skillMD {
-			ok = true
+			return pairs
 		}
 	}
-	if !ok {
-		die("%s: manifest must install SKILL.md into the skill directory", skill.Name)
-	}
-	return pairs
+	die("%s: SKILL.md must be installed into the skill directory", skill.Name)
+	return nil
 }
 
 func expandRemove(skillName string, m manifest, target Target) []string {
@@ -547,60 +515,26 @@ func directoryMtime(skillDir string) (time.Time, bool) {
 }
 
 func repoMtime(skill Skill) time.Time {
-	m := loadManifest(skill)
+	m := skill.Manifest
+	files := defaultFiles(skill, m)
+	for _, entry := range m.install {
+		_, _, matched := entrySources(skill, entry)
+		files = append(files, matched...)
+	}
 	var latest time.Time
-	addFile := func(path string) {
-		if st, err := os.Stat(path); err == nil && st.ModTime().After(latest) {
+	for _, p := range files {
+		if st, err := os.Stat(p); err == nil && st.ModTime().After(latest) {
 			latest = st.ModTime()
 		}
 	}
-	for _, entry := range m.install {
-		if entry.to == "" {
-			sourceOK(skill.Name, entry.from, false)
-			src := filepath.Join(skill.Path, entry.from)
-			if !exists(src) {
-				die("%s: missing %s", skill.Name, entry.from)
-			}
-			for _, p := range filesUnder(skill.Name, skill.Path, src) {
-				addFile(p)
-			}
-			continue
-		}
-		if hasGlobChars(entry.from) {
-			sourceOK(skill.Name, entry.from, true)
-			matches, _ := filepath.Glob(filepath.Join(skill.Path, entry.from))
-			matched := false
-			for _, match := range matches {
-				if isFile(match) {
-					rel, _ := filepath.Rel(skill.Path, match)
-					if !ignoredFile(rel) {
-						matched = true
-						addFile(match)
-					}
-				}
-			}
-			if !matched {
-				die("%s: no files matched %s", skill.Name, entry.from)
-			}
-			continue
-		}
-		sourceOK(skill.Name, entry.from, false)
-		src := filepath.Join(skill.Path, entry.from)
-		if !exists(src) {
-			die("%s: missing %s", skill.Name, entry.from)
-		}
-		for _, p := range filesUnder(skill.Name, skill.Path, src) {
-			addFile(p)
-		}
-	}
 	if latest.IsZero() {
-		die("%s: manifest has no files to version", skill.Name)
+		die("%s: no files to version", skill.Name)
 	}
 	return latest
 }
 
 func installedContentMtime(skill Skill, target Target) (time.Time, bool) {
-	pairs := expandInstall(skill, loadManifest(skill), target)
+	pairs := expandInstall(skill, skill.Manifest, target)
 	var latest time.Time
 	for _, p := range pairs {
 		if st, err := os.Stat(p.dest); err == nil && st.Mode().IsRegular() && st.ModTime().After(latest) {
@@ -614,7 +548,7 @@ func repoIsNewer(skill Skill, target Target) bool {
 	if !isFile(filepath.Join(target.SkillDir, "SKILL.md")) {
 		return false
 	}
-	for _, p := range expandInstall(skill, loadManifest(skill), target) {
+	for _, p := range expandInstall(skill, skill.Manifest, target) {
 		st, err := os.Stat(p.dest)
 		srcSt, srcErr := os.Stat(p.src)
 		if err != nil || !st.Mode().IsRegular() || (srcErr == nil && srcSt.ModTime().After(st.ModTime())) {
@@ -660,7 +594,7 @@ func parseFrontmatter(path string) map[string]string {
 }
 
 func planInstall(skill Skill, target Target, data *stateData, skipKeys map[entryKey]bool, replace, force bool) *Plan {
-	m := loadManifest(skill)
+	m := skill.Manifest
 	if isSymlink(target.SkillDir) {
 		die("%s is a symlink; refusing to install over it. Remove the link manually.", displayLink(target.SkillDir))
 	}
@@ -810,8 +744,8 @@ func platformsForSkill(skill Skill, filter []string, strict bool) []string {
 		}
 	}
 	if len(unsupported) > 0 && strict {
-		die("%s (%s) cannot target %s; it supports %s",
-			skill.Name, skill.Folder, strings.Join(unsupported, ", "), strings.Join(skill.Platforms, ", "))
+		die("%s cannot target %s; it supports %s",
+			skill.Name, strings.Join(unsupported, ", "), strings.Join(skill.Platforms, ", "))
 	}
 	var out []string
 	for _, p := range skill.Platforms {
@@ -976,7 +910,7 @@ func skillCmdUninstall(args *cliArgs, cat *catalog, names []string, data *stateD
 			}
 			var m *manifest
 			if skill, ok := byName[e.Skill]; ok {
-				loaded := loadManifest(skill)
+				loaded := skill.Manifest
 				m = &loaded
 			}
 			target := makeTarget(e.Platform, e.Scope, map[bool]string{true: project, false: ""}[e.Scope == "local"], e.Skill)
@@ -1000,7 +934,7 @@ func skillCmdUninstall(args *cliArgs, cat *catalog, names []string, data *stateD
 			}
 			var m *manifest
 			if inRepo {
-				loaded := loadManifest(skill)
+				loaded := skill.Manifest
 				m = &loaded
 			}
 			matched := false
@@ -1132,7 +1066,7 @@ func skillCmdUpdate(args *cliArgs, cat *catalog, names []string, data *stateData
 	}
 	for _, o := range outdated {
 		skill, target := o.skill, o.target
-		m := loadManifest(skill)
+		m := skill.Manifest
 		key := target.key(skill.Name)
 		verb := "updated"
 		if args.dryRun {

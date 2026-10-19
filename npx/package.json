@@ -1,6 +1,6 @@
 {
   "name": "aitools",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The tool manager for AI coding agents — install skills and MCP servers for Cursor, Codex, Claude Code, and Devin from any repository",
   "keywords": [
     "ai",

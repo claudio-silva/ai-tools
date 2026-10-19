@@ -18,6 +18,10 @@ func die(format string, args ...any) {
 	panic(&userError{fmt.Sprintf(format, args...)})
 }
 
+func warn(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "warning: "+format+"\n", args...)
+}
+
 func expandHome(path string) string {
 	if path == "~" {
 		return homeDir()

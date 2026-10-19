@@ -1,45 +1,47 @@
 # Repository format
 
-Any git repository — or local directory — that follows this layout is an `aitools` source. Users point the tool at it (`aitools use <repo>`, or a per-command first argument) and get `list`, `install`, `update`, and `uninstall` for everything it publishes. There is no central registry: your repository is the package index.
+Any git repository — or local directory — that contains skills or MCP servers is an `aitools` source. Users point the tool at it (`aitools use <repo>`, or a per-command first argument) and get `list`, `install`, `update`, and `uninstall` for everything it publishes. There is no central registry: your repository is the package index.
 
-A conforming repository has one or both of:
-
-```text
-skills/<Platform>/<name>/   skills, grouped by platform folder
-mcp/<name>/                 MCP servers
-```
+The layout is free-form. No directory names are required, and no metadata is needed for the common case: a skill is found by its `SKILL.md` and installed to every platform. An optional `aitools.json` adds what a tool can't express on its own: platform limits, files placed outside the skill directory, files left out, and MCP server settings.
 
 ## Skills
 
-A skill is a directory under `skills/<Platform>/<name>/` containing `SKILL.md` and `manifest.json`. The platform folder decides which agents the skill can be installed to:
+A skill is a directory containing `SKILL.md`. Discovery matches the [`skills`](https://github.com/vercel-labs/skills) CLI (`npx skills add`), so a repository that works with one works with the other:
 
-| Folder | Platforms |
-| --- | --- |
-| `Shared` | cursor, codex, claude-code, devin |
-| `Cursor` | cursor |
-| `Codex` | codex |
-| `Claude` | claude-code |
-| `Devin` | devin |
+- A `SKILL.md` at the repository root makes the whole repository one skill.
+- Otherwise these containers are searched up to three levels deep: `skills/`, `skills/.curated/`, `skills/.experimental/`, `skills/.system/`, `.agents/skills/`, `.claude/skills/`. Group skills however you like: `skills/<name>/` and `skills/<group>/<name>/` both work.
+- If the containers hold no skills, the whole repository is searched.
+- A skill directory hides any `SKILL.md` nested inside it. Hidden directories, `node_modules`, and `vendor` are skipped.
 
-`SKILL.md` carries the usual frontmatter (`name`, `description`) plus the body the agent reads. If the skill ships helper scripts or binaries, include them in the manifest and document in `SKILL.md` how the agent should invoke them — aitools copies whatever the manifest lists, preserving permissions.
+`SKILL.md` needs YAML frontmatter with `name` (lowercase letters, digits, and hyphens; it names the installed directory) and `description`. A skill missing either is skipped with a warning. Quote values that contain `: `. aitools reads them anyway, but warns, because strict YAML parsers (including `npx skills`) skip the skill.
 
-### manifest.json
+By default, the whole skill directory is installed — every file except dotfiles, `.DS_Store`, `__pycache__`, `.pyc` files, and `aitools.json` — to every platform. If the skill ships helper scripts or binaries, document in `SKILL.md` how the agent should invoke them; aitools preserves permissions.
+
+### Skill metadata: aitools.json
+
+Put an `aitools.json` next to `SKILL.md`, or describe the skill under `skills.<name>` in the repository's root `aitools.json` (one or the other, not both). Every key is optional:
 
 ```json
 {
-  "install": ["SKILL.md", "scripts", "references"],
-  "remove": ["$SKILLS_DIR/old-skill-name"]
+  "platforms": ["codex"],
+  "exclude": ["tests", "token-economy-support"],
+  "files": [
+    { "from": "te-agents/*.toml", "to": "$CODEX_HOME/agents/" },
+    { "from": "agents/openai.yaml", "platforms": ["codex"] }
+  ],
+  "remove": ["$SKILLS_DIR/token-economy", "$CODEX_HOME/agents/te_debug.toml"]
 }
 ```
 
-`install` is required and non-empty. Each entry is a path relative to the skill directory, or an object `{"from": "...", "to": "..."}`.
+- `platforms` — the platforms this skill supports: `cursor`, `codex`, `claude-code`, `devin`. Omitted means all.
+- `exclude` — paths or globs, relative to the skill directory, left out of the default copy. A match on a directory excludes everything under it.
+- `files` — placements beyond the default copy. Each entry is `{"from", "to", "platforms"}`; only `from` is required:
+  - `from` is a file, a directory, or a glob such as `te-agents/*.toml`. It stays inside the skill directory and cannot contain `..` or `**`. Its files are taken out of the default copy and installed only as this entry says.
+  - `to` is the destination. A glob copies each matched file into the `to` directory under its base name. A trailing slash on `to` does the same for one file. A directory `from` copies that directory's contents into `to`. Omitted, `to` is `from`'s own path inside the skill directory — useful together with `platforms`.
+  - `platforms` limits the entry to some of the skill's platforms, e.g. a Codex-only metadata file in an otherwise cross-platform skill.
+- `remove` — paths deleted on install and on uninstall when present. Use it for retired skill directories and obsolete files a previous version installed. A path another recorded install still uses is kept.
 
-- A string copies a file or directory to the same relative path inside the destination skill directory. Directory copies skip dotfiles, `.DS_Store`, `__pycache__`, and `.pyc` files. Name a dotfile explicitly if it must be installed.
-- `from` is a file, a directory, or a glob such as `te-agents/*.toml`. It stays inside the skill directory and cannot contain `..` or `**`.
-- `to` is the destination. A glob copies each matched file into the `to` directory under its base name. A trailing slash on `to` does the same for one file. A directory `from` copies that directory's contents into `to`.
-- The install must place `SKILL.md` in the destination skill directory.
-
-`remove` is optional. Those paths are deleted on install and on uninstall when present — use it for retired skill directories and obsolete files a previous version installed. A path another recorded install still uses is kept.
+`SKILL.md` must end up in the destination skill directory. Unknown keys are rejected.
 
 Variables in `to` and `remove` (longer names expand first):
 
@@ -53,30 +55,14 @@ Variables in `to` and `remove` (longer names expand first):
 
 `to` and `remove` must expand to an absolute path inside the selected platform directories, `$CODEX_HOME`, or the project directory — never the home directory, a platform config root, a skills directory, or `$CODEX_HOME/agents` itself.
 
-Example — a skill that also installs Codex agent roles and retires old paths:
-
-```json
-{
-  "install": [
-    "SKILL.md",
-    "agents",
-    "token-economy-validation.md",
-    { "from": "te-agents/*.toml", "to": "$CODEX_HOME/agents/" }
-  ],
-  "remove": [
-    "$SKILLS_DIR/token-economy",
-    "$CODEX_HOME/agents/te_debug.toml"
-  ]
-}
-```
+Other installers ignore `aitools.json`: `npx skills add` copies the skill directory as-is and leaves `files` placements to the skill itself. A skill that needs a placed file can check for it on first use and place it from its own directory.
 
 ## MCP servers
 
-An MCP server is `mcp/<name>/` with a `manifest.json`:
+An MCP server is a directory whose `aitools.json` has a `settings` key — any directory except the repository root or a skill directory. The directory name is the server name. Alternatively, describe it under `mcp.<name>` in the root `aitools.json`, with an optional `path` to its directory (default: the repository root).
 
 ```json
 {
-  "platforms": ["cursor", "codex", "claude-code", "devin"],
   "settings": {
     "command": "$BINARY",
     "env": { "OPENAI_API_KEY": "$OPENAI_API_KEY" }
@@ -86,9 +72,9 @@ An MCP server is `mcp/<name>/` with a `manifest.json`:
 }
 ```
 
-- `platforms` (required) — subset of `cursor`, `codex`, `claude-code`, `devin`.
 - `settings` (required) — the object written into each platform's MCP config under `mcpServers.<name>` (JSON) or `mcp_servers.<name>` (Codex TOML).
-- `files` (optional) — payload paths relative to `mcp/<name>/`, copied to `~/.local/share/ai-tools/mcp/<name>/`. Same entry forms as skill manifests: strings and `{"from", "to"}` objects, where `to` may use `$SERVER_DIR` and `$HOME`.
+- `platforms` (optional) — subset of `cursor`, `codex`, `claude-code`, `devin`. Omitted means all.
+- `files` (optional) — payload paths relative to the server directory, copied to `~/.local/share/ai-tools/mcp/<name>/`. Entries are strings or `{"from", "to"}` objects, where `to` may use `$SERVER_DIR` and `$HOME`.
 - `message` (optional) — shown after install.
 - `bin/<name>` (optional) — a shipped binary, copied to `~/bin` or `~/.local/bin` on install.
 
@@ -96,11 +82,40 @@ Three shapes, in order of how much they ship:
 
 1. **Binary server** — ship `bin/<name>`; use `$BINARY` in `settings.command`. The binary is copied to the user's bin directory.
 2. **Script server** — ship sources via `files`; use `$SERVER_DIR` in `settings` (e.g. `"command": "python3", "args": ["$SERVER_DIR/server.py"]`).
-3. **External server** — no `bin/`, no `files`; `settings` alone describes the launcher (`npx`, `uvx`, a remote `url`, …).
+3. **External server** — no `bin/`, no `files`; `settings` alone describes the launcher (`npx`, `uvx`, a remote `url`, …). These fit well in the root `aitools.json`.
 
 Placeholders in `settings` string values: `$BINARY` is the installed binary path, `$SERVER_DIR` the managed payload directory. Any other `$NAME` is filled from the environment at install time — on a TTY the user is prompted for missing values (an empty answer leaves the placeholder), and `--raw` writes placeholders as-is.
 
-`platforms`, `settings`, and `message` are the only required/optional keys; unknown keys are rejected.
+Unknown keys are rejected.
+
+## The root aitools.json
+
+Optional. It can hold three keys:
+
+```json
+{
+  "exclude": ["README.md"],
+  "skills": { "auto-routing": { "platforms": ["codex"] } },
+  "mcp": { "fetch": { "settings": { "command": "uvx", "args": ["mcp-server-fetch"] } } }
+}
+```
+
+- `exclude` — applied to every skill, before the skill's own `exclude`. Handy for leaving per-skill READMEs out of installs.
+- `skills` — skill metadata by skill name, as an alternative to per-skill files.
+- `mcp` — MCP servers by name, each with an optional `path`.
+
+## Example
+
+```text
+aitools.json                  {"exclude": ["README.md"]}
+skills/
+  lite-chrome-automation/     SKILL.md, cdp.mjs, README.md        → all platforms, no metadata
+  auto-routing/               SKILL.md, aitools.json, te-agents/   → codex, roles placed in $CODEX_HOME/agents
+mcp/
+  imagen/                     aitools.json, bin/imagen
+```
+
+A working example lives at [claudio-silva/ai-toolbox](https://github.com/claudio-silva/ai-toolbox).
 
 ## Where tools land
 
@@ -126,10 +141,10 @@ MCP configs:
 
 ## Install semantics
 
-- `install` copies manifest files and records the install in `~/.local/state/ai-tools/installs.json` (including which source repository it came from).
+- `install` copies the skill's files and records the install in `~/.local/state/ai-tools/installs.json` (including which source repository it came from).
 - A destination that already exists and wasn't installed by aitools is left alone — the install fails for that destination rather than overwriting foreign files.
-- Reinstalling replaces managed files and deletes files inside the skill directory that the manifest no longer lists.
-- `uninstall` deletes recorded paths and the manifest's `remove` paths, keeping paths still used by another recorded install. Deletions go to `~/.Trash` when possible, and are deleted permanently when it can't take them (e.g. a different volume). Paths outside the platform tool directories are never removed, and a symlinked install aborts the operation.
+- Reinstalling replaces managed files and deletes files inside the skill directory that the repository no longer ships.
+- `uninstall` deletes recorded paths and the skill's `remove` paths, keeping paths still used by another recorded install. Deletions go to `~/.Trash` when possible, and are deleted permanently when it can't take them (e.g. a different volume). Paths outside the platform tool directories are never removed, and a symlinked install aborts the operation.
 - An MCP entry in a platform config that aitools didn't record is left in place. `uninstall` removes the recorded binary/payload copies when no other install needs them; for a foreign entry it only removes the config key — never files it didn't write. `install --force`/`uninstall --force` override the foreign-entry guards.
 - `update` reinstalls tools whose repository copy is newer — comparing the repository files' modification times against the installed copies.
 
@@ -170,4 +185,4 @@ aitools setup [--remove]
 | `--raw` | With `install`/`update`, write `$NAME` placeholders instead of filling them |
 | `-h`, `--help` | Command and option summary |
 
-A named skill is never installed to a platform its folder doesn't support. With `--all`, unsupported platforms are skipped.
+A named tool is never installed to a platform it doesn't support. With `--all`, unsupported platforms are skipped.

@@ -7,14 +7,6 @@ import (
 
 var platformOrder = []string{"cursor", "codex", "claude-code", "devin"}
 
-var folderPlatforms = map[string][]string{
-	"Shared": {"cursor", "codex", "claude-code", "devin"},
-	"Cursor": {"cursor"},
-	"Codex":  {"codex"},
-	"Claude": {"claude-code"},
-	"Devin":  {"devin"},
-}
-
 var skipDirNames = map[string]bool{"__pycache__": true, ".git": true}
 
 // variables is ordered longest-first so $SKILLS_DIR expands before $SKILL_DIR.
@@ -22,9 +14,9 @@ var variables = []string{"SKILLS_DIR", "SKILL_DIR", "PLATFORM_HOME", "CODEX_HOME
 
 type Skill struct {
 	Name      string
-	Folder    string
 	Path      string // directory inside the source repo
 	Platforms []string
+	Manifest  manifest
 	Root      string // source repo root (local dir or cache snapshot)
 	Source    string // normalized source URL/path this tool came from
 }
