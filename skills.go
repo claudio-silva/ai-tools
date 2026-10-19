@@ -1025,11 +1025,14 @@ func skillCmdUpdate(args *cliArgs, cat *catalog, names []string, data *stateData
 		for _, scope := range scopes {
 			for _, platform := range platforms {
 				target := makeTarget(platform, scope, project, skill.Name)
-				if !isFile(filepath.Join(target.SkillDir, "SKILL.md")) {
+				// A recorded install whose files were deleted outside aitools
+				// is restored.
+				missing := !isFile(filepath.Join(target.SkillDir, "SKILL.md"))
+				if missing && findEntry(data.Installs, target.key(skill.Name), "skill") == nil {
 					continue
 				}
 				installedNames[skill.Name] = true
-				if repoIsNewer(skill, target) {
+				if missing || repoIsNewer(skill, target) {
 					outdated = append(outdated, struct {
 						skill  Skill
 						target Target
@@ -1256,7 +1259,7 @@ func collectInstalledSkills(args *cliArgs, cat *catalog, names []string, data *s
 				var notes []string
 				if hasEntry {
 					if !onDiskSet[name] {
-						notes = append(notes, "not on disk")
+						notes = append(notes, "missing on disk; update restores it")
 					}
 					if len(entry.ExternalFiles) > 0 {
 						parents := map[string]int{}

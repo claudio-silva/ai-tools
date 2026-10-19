@@ -1172,12 +1172,15 @@ func mcpCmdUpdate(args *cliArgs, cat *catalog, names []string, data *stateData, 
 			for _, platform := range platforms {
 				target := makeTarget(platform, scope, project, server.Name)
 				config := mcpConfigPath(platform, scope, project)
-				if !configHasServer(config, server.Name) {
+				entry := findEntry(data.Installs, target.key(server.Name), "mcp")
+				// A recorded install whose config entry was deleted outside
+				// aitools is restored.
+				missing := !configHasServer(config, server.Name)
+				if missing && entry == nil {
 					continue
 				}
 				installedNames[server.Name] = true
-				entry := findEntry(data.Installs, target.key(server.Name), "mcp")
-				if mcpIsNewer(server, dest, payload, config, entry) {
+				if missing || mcpIsNewer(server, dest, payload, config, entry) {
 					// update never deletes foreign files either: config entries
 					// may be adopted, but an unrecorded binary/payload path aborts
 					guardForeignMcpDests(data, server.Binary, dest, payload, false)
@@ -1221,14 +1224,23 @@ func mcpCmdUpdate(args *cliArgs, cat *catalog, names []string, data *stateData, 
 		if settingsByName[j.server.Name] != nil {
 			continue
 		}
-		// Keep secrets already recorded in the configs being rewritten so an
-		// update does not clobber them with placeholders.
+		// Keep secrets already in this server's configs, the ones being
+		// rewritten and the other recorded ones, so an update (or a restore
+		// of a deleted entry) does not clobber them with placeholders.
 		reuse := map[string]string{}
+		var configs []string
 		for _, other := range outdated {
-			if other.server.Name != j.server.Name {
-				continue
+			if other.server.Name == j.server.Name {
+				configs = append(configs, other.config)
 			}
-			for key, value := range configEnv(other.config, j.server.Name) {
+		}
+		for _, e := range data.Installs {
+			if e.kind() == "mcp" && e.Name == j.server.Name && e.ConfigPath != "" {
+				configs = append(configs, e.ConfigPath)
+			}
+		}
+		for _, config := range configs {
+			for key, value := range configEnv(config, j.server.Name) {
 				cur, seen := reuse[key]
 				if !seen || isPlaceholderValue(cur, key) && !isPlaceholderValue(value, key) {
 					reuse[key] = value
@@ -1450,7 +1462,7 @@ func collectInstalledMcps(args *cliArgs, cat *catalog, names []string, data *sta
 				}
 				var notes []string
 				if hasEntry && !onDiskSet[name] {
-					notes = append(notes, "not in config")
+					notes = append(notes, "missing from config; update restores it")
 				}
 				mark := "◎"
 				if hasEntry {
