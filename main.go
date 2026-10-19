@@ -8,9 +8,38 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"sort"
 	"strings"
 )
+
+// version is set at build time (see Makefile); plain go builds report the
+// VCS revision instead.
+var version = ""
+
+func versionString() string {
+	if version != "" {
+		return version
+	}
+	rev, dirty := "", false
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range info.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				rev = shortCommit(s.Value)
+			case "vcs.modified":
+				dirty = s.Value == "true"
+			}
+		}
+	}
+	if rev == "" {
+		return "dev"
+	}
+	if dirty {
+		rev += "-dirty"
+	}
+	return "dev (" + rev + ")"
+}
 
 const aboutURL = "https://github.com/claudio-silva/ai-tools/blob/main/ABOUT.md"
 
@@ -41,6 +70,7 @@ Commands:
   cache clear [<repo>]   Drop cached snapshots (all, or one repo).
   setup                  Installs or removes this command globally, for easy
                          access.
+  version                (or --version, -v) Show the aitools version.
   help                   (or --help) Show this help.
 
 Repository sources:
@@ -277,7 +307,7 @@ func wantsHelp(argv []string) bool {
 var commandNames = map[string]bool{
 	"use": true, "install": true, "update": true, "uninstall": true,
 	"list": true, "installed": true, "about": true, "info": true, "show": true,
-	"pull": true, "cache": true, "setup": true, "help": true,
+	"pull": true, "cache": true, "setup": true, "help": true, "version": true,
 }
 
 func validate(args *cliArgs) {
@@ -949,6 +979,13 @@ func run(argv []string) (code int) {
 	}()
 	if wantsHelp(argv) {
 		showHelp()
+		return 0
+	}
+	if len(argv) > 0 && (argv[0] == "--version" || argv[0] == "-v" || argv[0] == "version") {
+		if len(argv) > 1 {
+			die("%s takes no arguments", argv[0])
+		}
+		fmt.Printf("aitools %s\n", versionString())
 		return 0
 	}
 	args := parseArgs(argv)

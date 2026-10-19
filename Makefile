@@ -1,5 +1,6 @@
 GO ?= go
-LDFLAGS := -s -w
+VERSION := $(shell sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' npx/package.json)
+LDFLAGS := -s -w -X main.version=$(VERSION)
 
 build:
 	$(GO) build -ldflags "$(LDFLAGS)" -o aitools .
